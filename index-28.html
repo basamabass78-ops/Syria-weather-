@@ -1,0 +1,1620 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+<title>طقس سوريا</title>
+<meta name="theme-color" content="#151b2e">
+<meta name="description" content="تطبيق طقس سوريا - توقعات دقيقة لكل مدينة وقرية">
+<link rel="manifest" href="./manifest.json">
+<link rel="icon" href="./icon-192.png">
+<link rel="apple-touch-icon" href="./icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="طقس سوريا">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@5.7.0/dist/maplibre-gl.css">
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.7.0/dist/maplibre-gl.css">
+<style>
+  :root{
+    --sky-1:#0a0e1a; --sky-2:#151b2e; --sky-3:#1e1a35;
+    --card-bg:rgba(255,255,255,0.10); --card-border:rgba(255,255,255,0.18);
+    --text:#ffffff; --text-dim:rgba(255,255,255,0.72);
+    --accent:#ffd166; --accent-text:#241a00;
+    --danger-bg:rgba(255,90,90,0.22); --danger-border:rgba(255,120,120,0.5);
+    --chip-bg:rgba(255,255,255,0.10); --chip-bg-active:rgba(255,255,255,0.28);
+  }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{ margin:0; padding:0; height:100%; font-family:'Cairo',system-ui,sans-serif; color:var(--text); }
+  body{ background:linear-gradient(180deg,var(--sky-1),var(--sky-2) 55%,var(--sky-3)); overflow-x:hidden; min-height:100vh; }
+
+  /* ---------- خلفية الغيوم والبرق ---------- */
+  #skyLayer{ position:fixed; inset:0; z-index:0; overflow:hidden; pointer-events:none; }
+  .cloud{ position:absolute; border-radius:50%; filter:blur(2px); opacity:0.55; background:radial-gradient(ellipse at 40% 40%, rgba(160,170,195,0.55), rgba(90,98,120,0.25) 70%); animation: drift linear infinite; }
+  @keyframes drift{ from{ transform:translateX(-10%);} to{ transform:translateX(10%);} }
+  #flashOverlay{ position:fixed; inset:0; background:radial-gradient(circle at 50% 20%, rgba(255,255,255,0.9), rgba(255,255,255,0) 60%); opacity:0; z-index:1; pointer-events:none; }
+  .bolt-path{ stroke:#eaf2ff; stroke-width:3; fill:none; filter:drop-shadow(0 0 6px #bcd6ff); opacity:0; }
+  #boltSvg{ position:fixed; inset:0; width:100%; height:100%; z-index:1; pointer-events:none; }
+  @media (prefers-reduced-motion: reduce){ .cloud{ animation:none !important; } }
+
+  /* ---------- شاشة الدخول ---------- */
+  #splash{ position:fixed; inset:0; z-index:50; display:flex; flex-direction:column; align-items:center; justify-content:center; background:linear-gradient(180deg,var(--sky-1),var(--sky-2) 55%,var(--sky-3)); transition:opacity 0.5s ease; }
+  #splash.hide{ opacity:0; pointer-events:none; }
+  #splash .brand{ font-size:30px; font-weight:800; background:linear-gradient(180deg,#ffffff,#c9d6f0); -webkit-background-clip:text; background-clip:text; color:transparent; margin-top:18px; }
+  #splash .tagline{ font-size:13px; color:var(--text-dim); margin-top:6px; }
+  #splash .dots{ display:flex; gap:6px; margin-top:26px; }
+  #splash .dots span{ width:7px; height:7px; border-radius:50%; background:var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+  #splash .dots span:nth-child(2){ animation-delay:0.15s; }
+  #splash .dots span:nth-child(3){ animation-delay:0.3s; }
+  @keyframes pulse{ 0%,100%{ opacity:0.25; transform:scale(0.8);} 50%{ opacity:1; transform:scale(1.15);} }
+
+  .wrap{ position:relative; z-index:2; max-width:480px; margin:0 auto; padding:14px 14px 30px; }
+
+  .topbar{ display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+  .topbar h1{ font-size:20px; font-weight:800; margin:0; display:flex; align-items:center; gap:6px; }
+  .icon-btn{ background:var(--chip-bg); border:1px solid var(--card-border); color:var(--text); border-radius:12px; width:38px; height:38px; display:flex; align-items:center; justify-content:center; font-size:16px; cursor:pointer; }
+  .topbar-actions{ display:flex; gap:8px; }
+  .unit-toggle{ display:flex; border:1px solid var(--card-border); border-radius:10px; overflow:hidden; }
+  .unit-toggle button{ background:var(--chip-bg); color:var(--text); border:none; padding:7px 10px; font-size:12.5px; font-family:inherit; cursor:pointer; font-weight:700; }
+  .unit-toggle button.active{ background:var(--accent); color:var(--accent-text); }
+
+  .model-row{ display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; padding:0 2px; }
+  .model-label{ font-size:12.5px; color:var(--text-dim); }
+  .model-btn{ background:var(--chip-bg); border:1px solid var(--card-border); color:var(--text); border-radius:10px; padding:7px 12px; font-family:inherit; font-size:12.5px; font-weight:700; cursor:pointer; }
+  .model-panel{ display:none; flex-direction:column; gap:6px; background:var(--card-bg); backdrop-filter:blur(14px); border:1px solid var(--card-border); border-radius:16px; padding:10px; margin-bottom:12px; }
+  .model-panel.open{ display:flex; }
+  .model-option{ text-align:right; background:rgba(255,255,255,0.06); border:1px solid transparent; color:var(--text); border-radius:10px; padding:9px 12px; font-family:inherit; font-size:13.5px; cursor:pointer; }
+  .model-option.active{ background:var(--chip-bg-active); border-color:var(--card-border); font-weight:700; }
+
+  .map-toolbar{ display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; }
+  .map-toolbar .model-btn{ flex:1; text-align:right; }
+
+  .model-info-panel{ background:var(--card-bg); backdrop-filter:blur(14px); border:1px solid var(--card-border); border-radius:16px; padding:14px; margin-bottom:12px; font-size:12.5px; line-height:1.9; }
+  .model-info-panel .mi-title{ font-size:14px; font-weight:800; margin-bottom:6px; }
+  .model-info-panel .mi-row{ display:flex; justify-content:space-between; gap:10px; }
+  .model-info-panel .mi-key{ color:var(--text-dim); }
+  .model-info-panel .mi-note{ margin-top:8px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.1); color:var(--text-dim); font-size:11px; line-height:1.7; }
+  .status-dot{ display:inline-block; width:8px; height:8px; border-radius:50%; margin-inline-end:5px; }
+  .status-ok{ background:#4ade80; } .status-bad{ background:#f87171; } .status-unknown{ background:#9ca3af; }
+
+  .layer-row{ display:flex; gap:8px; overflow-x:auto; scrollbar-width:none; padding:2px; margin-bottom:8px; }
+  .layer-row::-webkit-scrollbar{ display:none; }
+  .layer-chip{ flex:0 0 auto; background:var(--chip-bg); border:1px solid var(--card-border); color:var(--text); border-radius:999px; padding:8px 14px; font-size:13px; font-family:inherit; cursor:pointer; white-space:nowrap; }
+  .layer-chip.active{ background:var(--chip-bg-active); font-weight:700; }
+  .layer-legend{ background:var(--card-bg); border:1px solid var(--card-border); border-radius:12px; padding:10px 14px; margin-bottom:10px; font-size:11.5px; }
+  .layer-legend .lg-title{ font-weight:700; margin-bottom:6px; }
+  .layer-legend .lg-bar{ height:10px; border-radius:5px; margin-bottom:4px; }
+  .layer-legend .lg-scale{ display:flex; justify-content:space-between; color:var(--text-dim); }
+  .layer-legend .lg-note{ margin-top:6px; color:var(--text-dim); }
+
+  .map-timeline{ background:var(--card-bg); border:1px solid var(--card-border); border-radius:16px; padding:12px 14px; margin-bottom:12px; }
+  .timeline-row{ display:flex; gap:8px; margin-bottom:8px; }
+  .tl-btn{ flex:1; background:var(--chip-bg); border:1px solid var(--card-border); color:var(--text); border-radius:10px; padding:8px; font-family:inherit; font-size:13px; cursor:pointer; }
+  .timeline-row-days{ margin-top:8px; gap:6px; }
+  .tl-btn-sm{ font-size:11.5px; padding:7px 4px; }
+  .tl-btn.active{ background:var(--accent); color:var(--accent-text); font-weight:700; }
+  #tlSlider{ width:100%; }
+  .tl-label{ text-align:center; font-size:12.5px; color:var(--text-dim); margin-top:4px; }
+
+  .grid-point-label{ background:rgba(0,0,0,0.6); color:#fff; border-radius:6px; padding:1px 5px; font-size:10px; border:none; white-space:nowrap; }
+
+  .tabs{ display:flex; gap:8px; margin-bottom:12px; }
+  .tab-btn{ flex:1; text-align:center; padding:9px; border-radius:12px; background:var(--chip-bg); border:1px solid var(--card-border); color:var(--text-dim); font-family:inherit; font-size:13.5px; font-weight:700; cursor:pointer; }
+  .tab-btn.active{ background:var(--chip-bg-active); color:var(--text); }
+
+  .chips-row{ display:flex; gap:8px; align-items:center; margin-bottom:12px; }
+  .chips{ display:flex; gap:8px; overflow-x:auto; scrollbar-width:none; padding:2px; flex:1; min-width:0; }
+  .chips::-webkit-scrollbar{ display:none; }
+  .chip{ flex:0 0 auto; display:flex; align-items:center; gap:6px; background:var(--chip-bg); border:1px solid var(--card-border); color:var(--text); border-radius:999px; padding:8px 14px; font-size:13.5px; cursor:pointer; white-space:nowrap; }
+  .chip.active{ background:var(--chip-bg-active); font-weight:700; }
+  .chip .rm{ opacity:0.6; font-size:12px; margin-inline-start:2px; }
+  .chip-add{ flex:0 0 auto; width:38px; height:38px; border-radius:50%; background:var(--accent); color:var(--accent-text); border:none; font-size:20px; font-weight:800; cursor:pointer; }
+
+  .search-panel{ background:var(--card-bg); backdrop-filter:blur(14px); border:1px solid var(--card-border); border-radius:18px; padding:14px; margin-bottom:12px; display:none; }
+  .search-panel.open{ display:block; }
+  .search-panel input{ width:100%; border-radius:12px; border:1px solid var(--card-border); background:rgba(255,255,255,0.10); color:var(--text); padding:11px 14px; font-size:15px; font-family:inherit; outline:none; }
+  .search-panel input::placeholder{ color:var(--text-dim); }
+  .search-results{ margin-top:10px; display:flex; flex-direction:column; gap:6px; }
+  .search-result{ background:rgba(255,255,255,0.08); border-radius:12px; padding:10px 14px; font-size:14px; cursor:pointer; display:flex; justify-content:space-between; }
+  .search-hint{ font-size:12px; color:var(--text-dim); margin-top:6px; }
+
+  .card{ background:var(--card-bg); backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px); border:1px solid var(--card-border); border-radius:22px; padding:20px; margin-bottom:14px; box-shadow:0 10px 30px rgba(0,0,0,0.25); }
+  .card.tight{ padding:14px 10px; }
+
+  .alert-card{ background:var(--danger-bg); border:1px solid var(--danger-border); border-radius:18px; padding:14px 16px; margin-bottom:14px; }
+  .alert-card .a-title{ font-weight:800; font-size:14px; }
+
+  .current-loc{ font-size:16px; color:var(--text-dim); margin-bottom:2px; }
+  .current-date{ font-size:13px; color:var(--text-dim); margin-bottom:14px; }
+  .current-main{ display:flex; align-items:center; justify-content:space-between; }
+  .current-temp{ font-size:62px; font-weight:800; line-height:1; }
+  .current-icon{ font-size:56px; }
+  .current-phrase{ font-size:18px; font-weight:700; margin-top:6px; }
+  .current-feel{ font-size:14px; color:var(--text-dim); margin-top:2px; }
+  .current-hilo{ font-size:14px; color:var(--text-dim); margin-top:6px; }
+
+  .detail-grid{ display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-top:16px; }
+  .detail-item{ background:rgba(255,255,255,0.07); border-radius:14px; padding:10px 6px; text-align:center; }
+  .detail-item .icon{ font-size:18px; display:block; margin-bottom:4px; }
+  .detail-item .label{ font-size:10.5px; color:var(--text-dim); }
+  .detail-item .value{ font-size:14px; font-weight:700; margin-top:2px; }
+
+  .section-title{ font-size:15px; font-weight:700; margin:4px 4px 10px; color:var(--text-dim); }
+
+  .hourly-row{ display:flex; gap:14px; overflow-x:auto; padding:4px 8px; scrollbar-width:none; }
+  .hourly-row::-webkit-scrollbar{ display:none; }
+  .hitem{ flex:0 0 auto; text-align:center; min-width:50px; }
+  .hitem .t{ font-size:12px; color:var(--text-dim); margin-bottom:6px; }
+  .hitem .ic{ font-size:22px; margin-bottom:6px; }
+  .hitem .v{ font-size:14px; font-weight:700; }
+  .hitem .p{ font-size:10.5px; color:#8ecbff; margin-top:3px; }
+
+  .daily-list{ display:flex; flex-direction:column; gap:2px; }
+  .drow{ display:flex; align-items:center; gap:10px; padding:10px 4px; border-bottom:1px solid rgba(255,255,255,0.08); }
+  .drow:last-child{ border-bottom:none; }
+  .drow .dname{ width:60px; font-size:14px; font-weight:700; flex-shrink:0; }
+  .drow .dicon{ font-size:20px; width:30px; text-align:center; flex-shrink:0; }
+  .drow .dprecip{ width:36px; font-size:11px; color:#8ecbff; text-align:center; flex-shrink:0; }
+  .drow .drange{ flex:1; display:flex; align-items:center; gap:8px; font-size:14px; }
+  .drow .dlo{ color:var(--text-dim); width:26px; text-align:center; }
+  .drow .dhi{ font-weight:700; width:26px; text-align:center; }
+  .bar-track{ flex:1; height:4px; border-radius:2px; background:rgba(255,255,255,0.13); position:relative; }
+  .bar-fill{ position:absolute; top:0; bottom:0; border-radius:2px; background:linear-gradient(90deg,#ffd166,#ff8a5b); }
+
+  #mapView{ display:none; }
+  #mapView.active{ display:block; margin:0 -14px -8px -14px; }
+  .map-fs-wrap{ position:relative; width:100%; height:70vh; min-height:360px; overflow:hidden; background:#0d1117; }
+  #leafletMap{ position:absolute; inset:0; width:100%; height:100%; background:#0d1117; }
+  .map-style-notice{ position:absolute; top:64px; left:10px; right:10px; z-index:8; background:rgba(255,209,102,0.92); border:1px solid rgba(255,209,102,0.9); color:#241a00; border-radius:10px; padding:8px 12px; font-size:11.5px; text-align:center; font-weight:700; }
+  .map-hint-fs{ position:absolute; bottom:8px; left:10px; right:10px; z-index:2; text-align:center; font-size:11px; color:rgba(255,255,255,0.6); pointer-events:none; }
+  .map-attr{ position:absolute; bottom:2px; right:8px; z-index:3; font-size:9px; color:rgba(255,255,255,0.55); background:rgba(0,0,0,0.4); padding:2px 6px; border-radius:6px; pointer-events:none; }
+
+  .map-ov{ position:absolute; z-index:5; }
+  .map-ov-top{ top:10px; left:10px; right:10px; display:flex; gap:8px; align-items:flex-start; }
+  .map-search-box{ flex:1; position:relative; min-width:0; }
+  .map-search-box input{ width:100%; border-radius:12px; border:1px solid var(--card-border); background:rgba(13,17,23,0.88); backdrop-filter:blur(10px); color:var(--text); padding:11px 14px; font-size:14px; font-family:inherit; outline:none; box-shadow:0 4px 14px rgba(0,0,0,0.35); }
+  .map-search-box input::placeholder{ color:var(--text-dim); }
+  .map-search-results{ position:absolute; top:calc(100% + 6px); left:0; right:0; background:rgba(13,17,23,0.96); backdrop-filter:blur(12px); border:1px solid var(--card-border); border-radius:12px; padding:6px; max-height:260px; overflow-y:auto; z-index:9; }
+  .map-search-results.hidden{ display:none; }
+  .map-search-result-item{ padding:9px 12px; border-radius:9px; font-size:13.5px; cursor:pointer; }
+  .map-search-result-item:active{ background:rgba(255,255,255,0.12); }
+  .map-search-hint-row{ padding:8px 10px; font-size:11.5px; color:var(--text-dim); }
+
+  .map-round-btn{ width:42px; height:42px; min-width:42px; flex:0 0 auto; border-radius:50%; background:rgba(13,17,23,0.88); backdrop-filter:blur(10px); border:1px solid var(--card-border); color:var(--text); font-size:16px; display:flex; align-items:center; justify-content:center; cursor:pointer; box-shadow:0 4px 14px rgba(0,0,0,0.35); padding:0; }
+
+  .map-ov-side{ top:64px; right:10px; display:flex; flex-direction:column; gap:8px; }
+  .map-ov-side .layer-chip{ width:42px; height:42px; border-radius:50%; background:rgba(13,17,23,0.88); backdrop-filter:blur(10px); border:1px solid var(--card-border); color:var(--text); font-size:17px; display:flex; align-items:center; justify-content:center; cursor:pointer; box-shadow:0 4px 14px rgba(0,0,0,0.35); padding:0; }
+  .map-ov-side .layer-chip.active{ background:var(--chip-bg-active); border-color:var(--accent); }
+
+  .map-ov-zoom{ bottom:160px; left:10px; display:flex; flex-direction:column; gap:8px; }
+
+  .map-floating-panel{ position:absolute; top:64px; left:10px; max-width:280px; width:calc(100% - 76px); z-index:7; }
+
+  .map-point-info{ position:absolute; left:10px; right:10px; bottom:172px; z-index:5; max-height:40vh; overflow-y:auto; }
+  .map-point-info:empty{ display:none; }
+
+  .map-ov-bottom{ position:absolute; left:8px; right:8px; bottom:8px; z-index:6; background:rgba(13,17,23,0.92); backdrop-filter:blur(14px); box-shadow:0 -4px 20px rgba(0,0,0,0.3); }
+
+  @media (min-width: 700px){
+    .map-fs-wrap{ height:calc(100vh - 140px) !important; }
+  }
+
+  .state-box{ text-align:center; padding:40px 16px; }
+  .state-box .icon{ font-size:44px; margin-bottom:10px; display:block; }
+  .state-box .msg{ font-size:15px; color:var(--text-dim); margin-bottom:16px; line-height:1.7; white-space:pre-line; }
+  .state-box button, .primary-btn{ border:none; border-radius:14px; padding:11px 22px; background:var(--accent); color:var(--accent-text); font-weight:700; font-size:14px; font-family:inherit; cursor:pointer; }
+
+  .spinner{ width:32px; height:32px; border-radius:50%; border:4px solid rgba(255,255,255,0.22); border-top-color:var(--text); animation:spin 0.8s linear infinite; margin:0 auto 14px; }
+  @keyframes spin{ to{ transform:rotate(360deg);} }
+
+  .updated-row{ display:flex; justify-content:space-between; align-items:center; margin-top:10px; }
+  .updated{ font-size:12px; color:var(--text-dim); }
+  .refresh-btn{ background:none; border:none; color:var(--text-dim); font-size:18px; cursor:pointer; }
+  .refresh-btn.spinning{ animation:spin 0.9s linear infinite; }
+
+  .footer-note{ text-align:center; font-size:11.5px; color:var(--text-dim); margin-top:8px; opacity:0.8; }
+  .hidden{ display:none !important; }
+  .leaflet-control-attribution{ font-size:9px !important; }
+</style>
+</head>
+<body>
+
+<div id="splash">
+  <svg width="120" height="90" viewBox="0 0 512 512">
+    <ellipse cx="256" cy="230" rx="150" ry="80" fill="#7f8aab"/>
+    <ellipse cx="180" cy="210" rx="80" ry="60" fill="#7f8aab"/>
+    <ellipse cx="330" cy="210" rx="90" ry="65" fill="#7f8aab"/>
+    <polygon points="270,260 220,340 255,340 225,410 320,310 275,310 305,260" fill="#ffd166"/>
+  </svg>
+  <div class="brand">طقس سوريا</div>
+  <div class="tagline">توقعات دقيقة لكل بقعة في سوريا</div>
+  <div class="dots"><span></span><span></span><span></span></div>
+</div>
+
+<div id="skyLayer"></div>
+<div id="flashOverlay"></div>
+<svg id="boltSvg"><path class="bolt-path" id="boltPath" d=""></path></svg>
+
+<div class="wrap">
+  <div class="topbar">
+    <h1><span id="titleIcon">☁️</span> طقس سوريا</h1>
+    <div class="topbar-actions">
+      <div class="unit-toggle" id="unitToggle">
+        <button data-unit="celsius" class="active">°م</button>
+        <button data-unit="fahrenheit">°ف</button>
+      </div>
+      <button class="icon-btn" id="refreshTop" title="تحديث">🔄</button>
+    </div>
+  </div>
+
+  <div class="model-row">
+    <span class="model-label">النموذج الحالي:</span>
+    <button class="model-btn" id="modelBtn">أفضل مزيج (تلقائي) ▾</button>
+  </div>
+  <div class="model-panel" id="modelPanel"></div>
+
+  <div class="tabs">
+    <button class="tab-btn active" id="tabWeather">الطقس</button>
+    <button class="tab-btn" id="tabMap">🗺️ الخريطة</button>
+  </div>
+
+  <div id="weatherView">
+    <div class="chips-row">
+      <div class="chips" id="chips"></div>
+      <button class="chip-add" id="addCityBtn">+</button>
+    </div>
+
+    <div class="search-panel" id="searchPanel">
+      <input id="searchInput" type="text" placeholder="اسم المدينة..." autocomplete="off">
+      <div class="search-hint" id="searchHint">اكتب اسم أي مدينة وأضفها لقائمتك، أو</div>
+      <button class="primary-btn" id="useMyLocationBtn" style="margin-top:8px; width:100%;">📍 استخدم موقعي الحالي</button>
+      <div class="search-results" id="searchResults"></div>
+    </div>
+
+    <div id="alertsBox"></div>
+    <div id="app"></div>
+  </div>
+
+  <div id="mapView">
+    <div class="map-fs-wrap" id="mapFsWrap">
+      <div id="leafletMap" class="map-canvas"></div>
+      <div id="mapBootStatus" style="position:absolute;z-index:20;top:112px;left:10px;right:10px;display:none;background:rgba(0,0,0,.82);color:#fff;border:1px solid rgba(255,255,255,.18);border-radius:10px;padding:10px 12px;font:600 12px/1.5 Cairo,system-ui,sans-serif;text-align:center;pointer-events:none;"></div>
+      <div id="mapStyleNotice" class="map-style-notice hidden"></div>
+
+      <!-- عائم علوي: بحث + زر النموذج -->
+      <div class="map-ov map-ov-top">
+        <div class="map-search-box">
+          <input id="mapSearchInput" type="text" placeholder="ابحث عن مدينة أو قرية سورية...">
+          <div class="map-search-results hidden" id="mapSearchResults"></div>
+        </div>
+        <button class="map-round-btn" id="mapModelBtn" title="نموذج الطقس">🛰️</button>
+        <button class="map-round-btn" id="mapInfoBtn" title="معلومات النموذج">ℹ️</button>
+      </div>
+      <div class="model-panel map-floating-panel" id="mapModelPanel"></div>
+      <div class="model-info-panel map-floating-panel hidden" id="modelInfoPanel"></div>
+
+      <!-- عائم جانبي: أزرار الطبقات (أيقونات مدمجة) -->
+      <div class="map-ov map-ov-side" id="layerRow">
+        <button class="layer-chip" data-layer="temperature" title="الحرارة">🌡️</button>
+        <button class="layer-chip" data-layer="wind" title="الرياح">💨</button>
+        <button class="layer-chip" data-layer="precipitation" title="المطر">🌧️</button>
+        <button class="layer-chip" data-layer="clouds" title="السحب">☁️</button>
+        <button class="layer-chip" data-layer="pressure" title="الضغط">🧭</button>
+        <button class="layer-chip" data-layer="snow" title="الثلوج">❄️</button>
+      </div>
+      <div class="layer-legend map-floating-panel hidden" id="layerLegend"></div>
+
+      <!-- عائم جانبي آخر: تكبير/تصغير/موقعي -->
+      <div class="map-ov map-ov-zoom">
+        <button class="map-round-btn" id="mapZoomIn" title="تكبير">+</button>
+        <button class="map-round-btn" id="mapZoomOut" title="تصغير">−</button>
+        <button class="map-round-btn" id="mapLocateBtn" title="موقعي الحالي">📍</button>
+      </div>
+
+      <!-- بطاقة معلومات النقطة المختارة (عائمة، مضغوطة) -->
+      <div id="mapWeatherResult" class="map-point-info"></div>
+
+      <!-- Timeline سفلي عائم -->
+      <div class="map-timeline map-ov-bottom hidden" id="mapTimeline">
+        <div class="timeline-row">
+          <button class="tl-btn" id="tlPrev">◀</button>
+          <button class="tl-btn" id="tlPlay">▶ تشغيل</button>
+          <button class="tl-btn" id="tlNext">التالي ▶</button>
+        </div>
+        <input type="range" id="tlSlider" min="0" max="23" value="0" step="1">
+        <div class="tl-label" id="tlLabel">الآن</div>
+        <div class="timeline-row timeline-row-days">
+          <button class="tl-btn tl-btn-sm" id="tlPrevDay">◀ اليوم السابق</button>
+          <button class="tl-btn tl-btn-sm" id="tlNow">📍 الآن</button>
+          <button class="tl-btn tl-btn-sm" id="tlNextDay">اليوم التالي ▶</button>
+        </div>
+      </div>
+
+      <div class="map-attr" id="mapAttrText">الخريطة: OpenFreeMap Dark · بيانات الخريطة من OpenStreetMap</div>
+      <div class="map-hint-fs" id="mapHintFs">اضغط على أي نقطة بالخريطة لعرض طقسها</div>
+    </div>
+  </div>
+
+  <div class="footer-note" id="footerNote">البيانات مقدّمة من Open-Meteo</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/maplibre-gl@5.7.0/dist/maplibre-gl.js"></script>
+<script>
+  if (typeof maplibregl === 'undefined') {
+    document.write('<script src="https://unpkg.com/maplibre-gl@5.7.0/dist/maplibre-gl.js"><\/script>');
+  }
+</script>
+<script>
+(function(){
+  const app = document.getElementById('app');
+  const alertsBox = document.getElementById('alertsBox');
+  const chips = document.getElementById('chips');
+  const searchPanel = document.getElementById('searchPanel');
+  const searchInput = document.getElementById('searchInput');
+  const searchResults = document.getElementById('searchResults');
+  const searchHint = document.getElementById('searchHint');
+  const addCityBtn = document.getElementById('addCityBtn');
+  const useMyLocationBtn = document.getElementById('useMyLocationBtn');
+  const unitToggle = document.getElementById('unitToggle');
+  const modelBtn = document.getElementById('modelBtn');
+  const modelPanel = document.getElementById('modelPanel');
+  const mapModelBtn = document.getElementById('mapModelBtn');
+  const mapModelPanel = document.getElementById('mapModelPanel');
+  const mapInfoBtn = document.getElementById('mapInfoBtn');
+  const mapZoomIn = document.getElementById('mapZoomIn');
+  const mapZoomOut = document.getElementById('mapZoomOut');
+  const mapLocateBtn = document.getElementById('mapLocateBtn');
+  const mapSearchInput = document.getElementById('mapSearchInput');
+  const mapSearchResults = document.getElementById('mapSearchResults');
+  const modelInfoPanel = document.getElementById('modelInfoPanel');
+  const layerRow = document.getElementById('layerRow');
+  const layerLegend = document.getElementById('layerLegend');
+  const mapTimeline = document.getElementById('mapTimeline');
+  const tlSlider = document.getElementById('tlSlider');
+  const tlPlay = document.getElementById('tlPlay');
+  const tlPrev = document.getElementById('tlPrev');
+  const tlNext = document.getElementById('tlNext');
+  const tlLabel = document.getElementById('tlLabel');
+  const tlPrevDay = document.getElementById('tlPrevDay');
+  const tlNextDay = document.getElementById('tlNextDay');
+  const tlNow = document.getElementById('tlNow');
+  const refreshTop = document.getElementById('refreshTop');
+  const titleIcon = document.getElementById('titleIcon');
+  const tabWeather = document.getElementById('tabWeather');
+  const tabMap = document.getElementById('tabMap');
+  const weatherView = document.getElementById('weatherView');
+  const mapView = document.getElementById('mapView');
+  const mapWeatherResult = document.getElementById('mapWeatherResult');
+
+  const LS_CITIES='sy_weather_cities_v1', LS_CURRENT='sy_weather_current_v1', LS_UNIT='sy_weather_unit_v1', LS_MODEL='sy_weather_model_v1';
+  let cities = [], currentCity = null, unit = 'celsius';
+  let refreshTimer = null;
+
+  // ---------- Model Manager: مصدر واحد مركزي للنموذج المختار، تستخدمه شاشة الطقس وشاشة الخريطة معًا ----------
+  // updateFreqHours و forecastDays و region مأخوذة حرفيًا من جدول Open-Meteo الرسمي (open-meteo.com/en/docs/gfs-api ،
+  // open-meteo.com/en/docs/ecmwf-api ، open-meteo.com/en/docs/dwd-api) بتاريخ هذا التعديل — وليست أرقامًا مخترعة.
+  // تُستخدم فقط لتقدير "آخر تشغيل تقريبي" — لا تمثل قيمة Run مؤكدة من الـ API لأن استجابة /v1/forecast لا تتضمن
+  // حقل وقت تشغيل النموذج فعليًا.
+  const WEATHER_MODELS = {
+    best_match:    { label: 'أفضل مزيج (تلقائي)', param: null,            updateFreqHours: null, forecastDays: 7,   region: 'يختلف حسب أفضل نموذج متاح لكل موقع' },
+    ecmwf_ifs025:  { label: 'ECMWF / IFS',         param: 'ecmwf_ifs025',  updateFreqHours: 6,    forecastDays: 15,  region: 'عالمي' },
+    ecmwf_aifs025: { label: 'AIFS (ذكاء اصطناعي)', param: 'ecmwf_aifs025_single', updateFreqHours: 6,    forecastDays: 15,  region: 'عالمي — نموذج تعلم آلي من ECMWF، مجموعة متغيرات أضيق من النماذج الفيزيائية' },
+    gfs_seamless:  { label: 'GFS',                 param: 'gfs_seamless',  updateFreqHours: 6,    forecastDays: 16,  region: 'عالمي (مدمج مع HRRR الأمريكي كل ساعة داخل الولايات المتحدة فقط)' },
+    gem_seamless:  { label: 'GEM',                 param: 'gem_seamless',  updateFreqHours: 12,   forecastDays: 10,  region: 'عالمي وكندا' },
+    icon_global:   { label: 'DWD ICON Global',     param: 'icon_global',   updateFreqHours: 6,    forecastDays: 7.5, region: 'عالمي' },
+    icon_eu:       { label: 'ICON-EU',             param: 'icon_eu',       updateFreqHours: 3,    forecastDays: 5,   region: 'أوروبا (يشمل الشرق الأوسط جزئيًا)' }
+  };
+  let selectedModel = 'best_match';
+  let lastModelFetchOk = null; // null = لم يُجرَّب بعد، true/false = آخر نتيجة فعلية
+
+  function estimateModelRun(modelKey){
+    const info = WEATHER_MODELS[modelKey];
+    if (!info || !info.updateFreqHours) return null;
+    const freq = info.updateFreqHours;
+    const now = new Date();
+    const totalHoursUtc = now.getUTCHours() + now.getUTCMinutes()/60;
+    const lastRunHourUtc = Math.floor(totalHoursUtc / freq) * freq;
+    const runUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), Math.floor(lastRunHourUtc), Math.round((lastRunHourUtc%1)*60), 0));
+    const nextRunUtc = new Date(runUtc.getTime() + freq*3600*1000);
+    const ageHours = (now.getTime() - runUtc.getTime())/3600000;
+    const untilNextHours = (nextRunUtc.getTime() - now.getTime())/3600000;
+    return { runUtc, nextRunUtc, ageHours, untilNextHours };
+  }
+
+  function storageGet(k, fb){ try{ const v = localStorage.getItem(k); return v ? JSON.parse(v) : fb; }catch(e){ return fb; } }
+  function storageSet(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
+
+
+  // ---------- خلفية الغيوم والبرق ----------
+  function initSky(){
+    const layer = document.getElementById('skyLayer');
+    const specs = [
+      {w:340,h:170,top:'6%',left:'-10%',dur:75},
+      {w:260,h:140,top:'14%',left:'40%',dur:95},
+      {w:300,h:150,top:'3%',left:'65%',dur:65}
+    ];
+    specs.forEach(s=>{
+      const d = document.createElement('div');
+      d.className='cloud';
+      d.style.width=s.w+'px'; d.style.height=s.h+'px';
+      d.style.top=s.top; d.style.left=s.left;
+      d.style.animationDuration=s.dur+'s';
+      layer.appendChild(d);
+    });
+    // ملاحظة: لا يوجد هنا أي تشغيل تلقائي للبرق — البرق لا يبدأ إلا بعد معرفة حالة الطقس الحقيقية (انظر updateWeatherBackground)
+  }
+
+  // يعدّل فقط خصائص عناصر الغيوم الموجودة أصلًا (المُنشأة في initSky أعلاه) حسب فئة الطقس الحقيقية من getWeatherCategory —
+  // لا يُنشئ أي عنصر جديد ولا نظام رسم جديد، فقط Opacity/Filter على نفس عناصر .cloud الحالية.
+  const CLOUD_STYLE_BY_CATEGORY = {
+    'clear':          { opacity: 0.08, filter: 'none' },
+    'clear-night':    { opacity: 0.06, filter: 'none' },
+    'partly-cloudy':  { opacity: 0.32, filter: 'none' },
+    'cloudy':         { opacity: 0.55, filter: 'none' },
+    'cloudy-night':   { opacity: 0.5,  filter: 'none' },
+    'rain':           { opacity: 0.62, filter: 'brightness(0.8)' },
+    'thunderstorm':   { opacity: 0.78, filter: 'brightness(0.55)' },
+    'snow':           { opacity: 0.5,  filter: 'brightness(1.25)' },
+    'fog':            { opacity: 0.5,  filter: 'blur(4px)' }
+  };
+  function updateCloudsForCategory(category){
+    const style = CLOUD_STYLE_BY_CATEGORY[category] || CLOUD_STYLE_BY_CATEGORY['clear'];
+    document.querySelectorAll('#skyLayer .cloud').forEach(el=>{
+      el.style.opacity = style.opacity;
+      el.style.filter = style.filter;
+    });
+  }
+
+  // lightningGeneration: "رقم جيل" — أي دالة برق مؤجّلة (setTimeout) تتحقق أن جيلها لا يزال ساري المفعول قبل التنفيذ.
+  // هذا يمنع بقاء أكثر من حلقة برق شغّالة بالتوازي، ويوقف أي حلقة قديمة فورًا عند تغيير المدينة أو زوال العاصفة.
+  let lightningGeneration = 0;
+  let lightningPendingTimeout = null;
+
+  function stopLightning(){
+    lightningGeneration++;
+    if (lightningPendingTimeout){ clearTimeout(lightningPendingTimeout); lightningPendingTimeout = null; }
+  }
+
+  function startLightningForThunderstorm(){
+    stopLightning(); // يلغي أي حلقة سابقة أولًا (يضمن عدم وجود أكثر من حلقة بنفس الوقت)
+    const myGen = lightningGeneration;
+    scheduleNextLightning(myGen);
+  }
+
+  function scheduleNextLightning(gen){
+    // فاصل غير ثابت بين 4 و14 ثانية قبل الومضة (أو مجموعة الومضات) التالية — ليس Interval ثابتًا
+    const delay = 4000 + Math.random()*10000;
+    lightningPendingTimeout = setTimeout(()=>{
+      if (gen !== lightningGeneration) return; // حلقة قديمة أُلغيت، توقف فورًا
+      // أحيانًا ومضة واحدة، وأحيانًا 2-3 ومضات متقاربة (مجموعة) ثم هدوء
+      const burstCount = Math.random() < 0.35 ? (2 + (Math.random()<0.3?1:0)) : 1;
+      fireLightningBurst(gen, burstCount, 0);
+    }, delay);
+  }
+
+  function fireLightningBurst(gen, count, i){
+    if (gen !== lightningGeneration) return;
+    flash();
+    if (i+1 < count){
+      const gap = 250 + Math.random()*500; // فاصل قصير غير ثابت بين ومضات نفس المجموعة
+      lightningPendingTimeout = setTimeout(()=> fireLightningBurst(gen, count, i+1), gap);
+    } else {
+      scheduleNextLightning(gen);
+    }
+  }
+
+  function flash(){
+    const overlay = document.getElementById('flashOverlay');
+    const boltPath = document.getElementById('boltPath');
+    const w = window.innerWidth, h = window.innerHeight;
+    const startX = w*(0.3+Math.random()*0.4), startY = h*0.05;
+    let d = 'M'+startX+','+startY;
+    let x = startX, y = startY;
+    for (let i=0;i<5;i++){
+      x += (Math.random()-0.5)*60;
+      y += h*0.09 + Math.random()*30;
+      d += ' L'+x+','+y;
+    }
+    boltPath.setAttribute('d', d);
+    const len = 600;
+    boltPath.style.transition='none';
+    boltPath.style.strokeDasharray = len;
+    boltPath.style.strokeDashoffset = len;
+    boltPath.style.opacity = 1;
+    requestAnimationFrame(()=>{
+      boltPath.style.transition='stroke-dashoffset 0.25s linear, opacity 0.6s ease 0.2s';
+      boltPath.style.strokeDashoffset = 0;
+    });
+    overlay.style.transition='none';
+    overlay.style.opacity = 0.5;
+    requestAnimationFrame(()=>{
+      overlay.style.transition='opacity 0.6s ease';
+      overlay.style.opacity = 0;
+    });
+    setTimeout(()=>{ boltPath.style.opacity = 0; }, 900);
+  }
+
+  // ---------- شاشة الدخول ----------
+  window.addEventListener('load', () => {
+    setTimeout(()=>{ document.getElementById('splash').classList.add('hide'); }, 1100);
+  });
+
+  // ---------- ترجمة أكواد الطقس WMO ----------
+  const WMO = {
+    0:{t:'صافٍ', i:d=>d?'☀️':'🌕'},
+    1:{t:'صافٍ غالبًا', i:d=>d?'🌤️':'🌙'},
+    2:{t:'غائم جزئيًا', i:d=>d?'⛅':'☁️'},
+    3:{t:'غائم', i:()=>'☁️'},
+    45:{t:'ضباب', i:()=>'🌫️'}, 48:{t:'ضباب متجمد', i:()=>'🌫️'},
+    51:{t:'رذاذ خفيف', i:()=>'🌦️'}, 53:{t:'رذاذ', i:()=>'🌦️'}, 55:{t:'رذاذ كثيف', i:()=>'🌦️'},
+    56:{t:'رذاذ متجمد', i:()=>'🌧️'}, 57:{t:'رذاذ متجمد كثيف', i:()=>'🌧️'},
+    61:{t:'مطر خفيف', i:()=>'🌧️'}, 63:{t:'مطر', i:()=>'🌧️'}, 65:{t:'مطر غزير', i:()=>'🌧️'},
+    66:{t:'مطر متجمد', i:()=>'🌧️'}, 67:{t:'مطر متجمد غزير', i:()=>'🌧️'},
+    71:{t:'ثلج خفيف', i:()=>'🌨️'}, 73:{t:'ثلج', i:()=>'🌨️'}, 75:{t:'ثلج غزير', i:()=>'❄️'},
+    77:{t:'حبيبات ثلجية', i:()=>'🌨️'},
+    80:{t:'زخات مطر خفيفة', i:()=>'🌦️'}, 81:{t:'زخات مطر', i:()=>'🌧️'}, 82:{t:'زخات مطر غزيرة', i:()=>'⛈️'},
+    85:{t:'زخات ثلجية', i:()=>'🌨️'}, 86:{t:'زخات ثلجية غزيرة', i:()=>'❄️'},
+    95:{t:'عاصفة رعدية', i:()=>'⛈️'}, 96:{t:'عاصفة رعدية مع برَد', i:()=>'⛈️'}, 99:{t:'عاصفة رعدية شديدة مع برَد', i:()=>'⛈️'}
+  };
+  function wmoText(code){ return (WMO[code] && WMO[code].t) || 'غير معروف'; }
+  function wmoIcon(code, isDay){ return (WMO[code] ? WMO[code].i(isDay) : '🌡️'); }
+  function isHazardCode(code){ return [65,67,75,82,86,95,96,99].includes(code); }
+
+  // ---------- تصنيف حالة الطقس (مصدر واحد يُستخدم للخلفية وللبرق معًا) ----------
+  function getWeatherCategory(code, isDay){
+    const day = !!isDay;
+    if ([95,96,99].includes(code)) return 'thunderstorm';
+    if ([71,73,75,77,85,86].includes(code)) return 'snow';
+    if ([45,48].includes(code)) return 'fog';
+    if ([51,53,55,56,57,61,63,65,66,67,80,81,82].includes(code)) return 'rain';
+    if (code === 2) return day ? 'partly-cloudy' : 'cloudy-night';
+    if (code === 3) return day ? 'cloudy' : 'cloudy-night';
+    return day ? 'clear' : 'clear-night'; // 0, 1، أو كود غير معروف
+  }
+
+  function gradientForWeather(code, isDay, tempC){
+    const cat = getWeatherCategory(code, isDay);
+    switch(cat){
+      case 'thunderstorm':   return isDay ? 'rgba(60,65,90,0.4)'   : 'rgba(20,20,40,0.5)';
+      case 'snow':           return isDay ? 'rgba(210,225,240,0.32)' : 'rgba(70,85,110,0.4)';
+      case 'fog':            return isDay ? 'rgba(150,155,160,0.3)' : 'rgba(40,45,70,0.35)';
+      case 'rain':           return isDay ? 'rgba(90,100,120,0.32)' : 'rgba(30,35,55,0.4)';
+      case 'cloudy':         return isDay ? 'rgba(90,100,120,0.3)'  : 'rgba(40,45,70,0.35)';
+      case 'partly-cloudy':  return isDay ? 'rgba(120,150,190,0.25)': 'rgba(30,40,65,0.3)';
+      case 'cloudy-night':   return 'rgba(40,45,70,0.35)';
+      case 'clear-night':    return 'rgba(10,15,35,0.25)';
+      default: // clear
+        if (typeof tempC === 'number' && tempC >= 40) return 'rgba(200,110,30,0.28)';
+        return 'rgba(70,130,200,0.22)';
+    }
+  }
+
+  // يقرر تشغيل/إيقاف البرق فعليًا بناءً فقط على حالة الطقس الحقيقية الحالية — يُستدعى في كل مرة يُعرض فيها طقس المدينة الحالية
+  function updateLightningForWeather(code, isDay){
+    const cat = getWeatherCategory(code, isDay);
+    if (cat === 'thunderstorm'){
+      startLightningForThunderstorm();
+    } else {
+      stopLightning();
+    }
+  }
+
+  // ---------- شبكة: بحث المدن + الطقس ----------
+  async function geocodeSearch(q){
+    const url = 'https://geocoding-api.open-meteo.com/v1/search?name=' + encodeURIComponent(q) + '&count=6&language=ar&format=json';
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('geocode_failed');
+    const data = await res.json();
+    return data.results || [];
+  }
+
+  async function reverseGeocode(lat, lon){
+    try{
+      const url = 'https://nominatim.openstreetmap.org/reverse?format=json&lat='+lat+'&lon='+lon+'&accept-language=ar&zoom=10';
+      const res = await fetch(url, { headers: { 'Accept':'application/json' } });
+      if (!res.ok) throw new Error('reverse_failed');
+      const data = await res.json();
+      const a = data.address || {};
+      return a.city || a.town || a.village || a.county || a.state || data.display_name || 'موقعي الحالي';
+    }catch(e){
+      return 'موقعي الحالي';
+    }
+  }
+
+  async function fetchWeather(lat, lon, unitParam, modelKey){
+    const tempUnit = unitParam === 'fahrenheit' ? '&temperature_unit=fahrenheit' : '';
+    const modelInfo = WEATHER_MODELS[modelKey] || WEATHER_MODELS.best_match;
+    const modelParam = modelInfo.param ? ('&models=' + modelInfo.param) : '';
+    // forecast_days يُحدَّد من مدة التوقعات الرسمية لكل نموذج (WEATHER_MODELS)، وليس رقمًا ثابتًا.
+    // Open-Meteo يشترط قيمة صحيحة بين 0 و16، لذلك نقرّب لأسفل (مثال: ICON Global=7.5 يوم → 7 كحد أقصى مسموح للطلب)
+    const forecastDaysParam = Math.max(1, Math.min(16, Math.floor(modelInfo.forecastDays || 7)));
+    // بعض النماذج (مثل GraphCast) لا تدعم كل متغيرات current المعتادة فعليًا (موثّق من مصدر Open-Meteo نفسه) —
+    // طلب متغير غير مدعوم من نموذج محدد يرفضه Open-Meteo بالكامل (400)، فنستثني هذي الحقول تحديدًا لذلك النموذج فقط.
+    const defaultCurrentFields = ['temperature_2m','relative_humidity_2m','apparent_temperature','is_day','precipitation','weather_code','wind_speed_10m','surface_pressure'];
+    const unsupported = modelInfo.unsupportedCurrentFields || [];
+    const currentFields = defaultCurrentFields.filter(f => !unsupported.includes(f));
+    const url = 'https://api.open-meteo.com/v1/forecast?latitude='+lat+'&longitude='+lon+
+      '&current='+currentFields.join(',')+
+      '&hourly=temperature_2m,precipitation_probability,weather_code'+
+      '&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,uv_index_max,sunrise,sunset'+
+      '&timezone=auto&forecast_days='+forecastDaysParam+tempUnit+modelParam;
+    const res = await fetch(url);
+    if (!res.ok){
+      let reason = 'weather_failed';
+      try{ const errBody = await res.json(); if (errBody && errBody.reason) reason = errBody.reason; }catch(e){}
+      const err = new Error(reason);
+      err.isModelError = !!modelInfo.param;
+      throw err;
+    }
+    const json = await res.json();
+    // بعض النماذج (مثل AIFS بسبب مجموعة متغيرات أضيق، أو ICON-D2 خارج نطاقه الإقليمي في أوروبا الوسطى)
+    // ترجع استجابة ناجحة (200) لكن بحقول current فارغة (null) لأن البيانات غير متوفرة فعليًا لهذا الموقع/النموذج.
+    // نتحقق من الحقل الأساسي temperature_2m صراحة بدل السماح بعرضه كصفر وهمي في الواجهة.
+    if (modelInfo.param && (!json.current || json.current.temperature_2m === null || json.current.temperature_2m === undefined)){
+      console.error('Open-Meteo: بيانات current.temperature_2m غير متوفرة للنموذج "'+modelInfo.label+'" عند هذا الموقع ('+lat+','+lon+'). الاستجابة الكاملة:', json);
+      const err = new Error('model_data_unavailable_at_location');
+      err.isModelError = true;
+      throw err;
+    }
+    return json;
+  }
+
+  // ---------- عرض حالات عامة ----------
+  function renderLoading(msg){
+    app.innerHTML = '<div class="card state-box"><div class="spinner"></div><div class="msg">'+(msg||'يتم جلب حالة الطقس...')+'</div></div>';
+  }
+  function renderError(msg, onRetry){
+    app.innerHTML = '<div class="card state-box"><span class="icon">⚠️</span><div class="msg">'+msg+'</div><button id="retryBtn">حاول مرة أخرى</button></div>';
+    const b = document.getElementById('retryBtn');
+    if (b) b.onclick = onRetry;
+  }
+
+  // ---------- المدن ----------
+  function renderChips(){
+    chips.innerHTML = cities.map(c => (
+      '<button class="chip'+(c.id===currentCity.id?' active':'')+'" data-id="'+c.id+'">'+
+        '<span>'+c.name+'</span>'+
+        (cities.length>1 ? '<span class="rm" data-remove="'+c.id+'">✕</span>' : '')+
+      '</button>'
+    )).join('');
+  }
+
+  chips.addEventListener('click', (e)=>{
+    const rm = e.target.closest('[data-remove]');
+    if (rm){
+      const id = rm.getAttribute('data-remove');
+      cities = cities.filter(c=>c.id!==id);
+      storageSet(LS_CITIES, cities);
+      if (currentCity.id===id && cities.length){
+        currentCity = cities[0];
+        storageSet(LS_CURRENT, currentCity);
+        renderChips();
+        loadWeather();
+      } else renderChips();
+      return;
+    }
+    const chip = e.target.closest('.chip');
+    if (chip){
+      const id = chip.getAttribute('data-id');
+      const c = cities.find(x=>x.id===id);
+      if (c && id!==currentCity.id){
+        currentCity = c;
+        storageSet(LS_CURRENT, currentCity);
+        renderChips();
+        loadWeather();
+      }
+    }
+  });
+
+  addCityBtn.addEventListener('click', ()=>{
+    searchPanel.classList.toggle('open');
+    if (searchPanel.classList.contains('open')) searchInput.focus();
+  });
+
+  let searchDebounce=null, searchSeq=0;
+  async function doSearch(){
+    const q = searchInput.value.trim();
+    const mySeq = ++searchSeq;
+    if (!q){ searchResults.innerHTML=''; return; }
+    searchResults.innerHTML = '<div class="search-hint">جارٍ البحث...</div>';
+    try{
+      const results = await geocodeSearch(q);
+      if (mySeq!==searchSeq) return;
+      if (!results.length){ searchResults.innerHTML = '<div class="search-hint">لا توجد نتائج لـ "'+q+'"</div>'; return; }
+      searchResults.innerHTML = results.slice(0,6).map(r=>{
+        const label = r.name + (r.admin1 ? '، '+r.admin1 : '') + (r.country ? ' - '+r.country : '');
+        return '<div class="search-result" data-lat="'+r.latitude+'" data-lon="'+r.longitude+'" data-name="'+label.replace(/"/g,'&quot;')+'"><span>📍 '+label+'</span><span>+ إضافة</span></div>';
+      }).join('');
+    }catch(err){
+      if (mySeq!==searchSeq) return;
+      searchResults.innerHTML = '<div class="search-hint">تعذّر البحث، تحقق من اتصالك بالإنترنت.</div>';
+    }
+  }
+  searchInput.addEventListener('input', ()=>{ clearTimeout(searchDebounce); searchDebounce=setTimeout(doSearch,400); });
+  searchInput.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ clearTimeout(searchDebounce); doSearch(); } });
+
+  function addAndSelectCity(name, lat, lon){
+    const id = lat.toFixed(3)+','+lon.toFixed(3);
+    if (!cities.find(c=>c.id===id)){
+      cities.push({id, name, lat, lon});
+      if (cities.length>8) cities.shift();
+      storageSet(LS_CITIES, cities);
+    }
+    currentCity = cities.find(c=>c.id===id);
+    storageSet(LS_CURRENT, currentCity);
+    searchPanel.classList.remove('open');
+    searchInput.value=''; searchResults.innerHTML='';
+    renderChips();
+    loadWeather();
+  }
+
+  searchResults.addEventListener('click', (e)=>{
+    const item = e.target.closest('.search-result');
+    if (!item) return;
+    addAndSelectCity(item.getAttribute('data-name'), parseFloat(item.getAttribute('data-lat')), parseFloat(item.getAttribute('data-lon')));
+  });
+
+  useMyLocationBtn.addEventListener('click', ()=> requestLocation(true));
+
+  // ---------- Model Manager UI: مصدر واحد يغذي شاشة الطقس وشاشة الخريطة معًا ----------
+  function renderModelOptions(panelEl){
+    panelEl.innerHTML = Object.keys(WEATHER_MODELS).map(key => {
+      const m = WEATHER_MODELS[key];
+      return '<button class="model-option'+(key===selectedModel?' active':'')+'" data-model="'+key+'">'+m.label+'</button>';
+    }).join('');
+  }
+
+  function applyModelToUI(){
+    const info = WEATHER_MODELS[selectedModel] || WEATHER_MODELS.best_match;
+    modelBtn.textContent = info.label + ' ▾';
+    mapModelBtn.textContent = info.label + ' ▾';
+    renderModelOptions(modelPanel);
+    renderModelOptions(mapModelPanel);
+    if (!modelInfoPanel.classList.contains('hidden')) renderModelInfoPanel();
+  }
+
+  function onModelChanged(){
+    storageSet(LS_MODEL, selectedModel);
+    applyModelToUI();
+    if (currentCity) loadWeather();
+    if (lastMapPoint) fetchPointWeatherForMap(lastMapPoint.lat, lastMapPoint.lng);
+    if (activeLayer) refreshLayerGrid();
+  }
+
+  function selectModel(key){
+    if (key === selectedModel) return;
+    if (!WEATHER_MODELS[key]) return;
+    selectedModel = key;
+    onModelChanged();
+  }
+
+  modelBtn.addEventListener('click', ()=> modelPanel.classList.toggle('open'));
+  modelPanel.addEventListener('click', (e)=>{
+    const opt = e.target.closest('.model-option');
+    if (!opt) return;
+    selectModel(opt.getAttribute('data-model'));
+    modelPanel.classList.remove('open');
+  });
+
+  mapModelBtn.addEventListener('click', ()=> mapModelPanel.classList.toggle('open'));
+  mapModelPanel.addEventListener('click', (e)=>{
+    const opt = e.target.closest('.model-option');
+    if (!opt) return;
+    selectModel(opt.getAttribute('data-model'));
+    mapModelPanel.classList.remove('open');
+  });
+
+  // ---------- لوحة معلومات النموذج: شفافية كاملة، لا أرقام مخترعة ----------
+  function renderModelInfoPanel(){
+    const info = WEATHER_MODELS[selectedModel] || WEATHER_MODELS.best_match;
+    const est = estimateModelRun(selectedModel);
+    const statusClass = lastModelFetchOk === true ? 'status-ok' : (lastModelFetchOk === false ? 'status-bad' : 'status-unknown');
+    const statusText = lastModelFetchOk === true ? 'متاحة (آخر جلب ناجح)' : (lastModelFetchOk === false ? 'تعذّر التحديث' : 'لم يتم الجلب بعد');
+
+    let runRows = '';
+    if (est){
+      runRows =
+        '<div class="mi-row"><span class="mi-key">آخر تشغيل تقديري (UTC)</span><span>'+est.runUtc.toISOString().slice(0,16).replace('T',' ')+'Z</span></div>'+
+        '<div class="mi-row"><span class="mi-key">آخر تشغيل تقديري (وقتك المحلي)</span><span>'+est.runUtc.toLocaleString('ar-SA',{hour:'2-digit',minute:'2-digit',day:'2-digit',month:'2-digit'})+'</span></div>'+
+        '<div class="mi-row"><span class="mi-key">عمر البيانات التقريبي</span><span>'+est.ageHours.toFixed(1)+' ساعة</span></div>'+
+        '<div class="mi-row"><span class="mi-key">التشغيل القادم المتوقع (UTC)</span><span>'+est.nextRunUtc.toISOString().slice(0,16).replace('T',' ')+'Z</span></div>'+
+        '<div class="mi-row"><span class="mi-key">الوقت المتبقي للتحديث القادم</span><span>~'+est.untilNextHours.toFixed(1)+' ساعة</span></div>';
+    } else {
+      runRows = '<div class="mi-row"><span class="mi-key">وقت التشغيل (Run)</span><span>غير متاح من واجهة Open-Meteo لهذا الخيار</span></div>';
+    }
+
+    modelInfoPanel.innerHTML =
+      '<div class="mi-title">'+info.label+'</div>'+
+      '<div class="mi-row"><span class="mi-key">التغطية الجغرافية</span><span>'+info.region+'</span></div>'+
+      '<div class="mi-row"><span class="mi-key">مدى التوقعات المتاح</span><span>'+info.forecastDays+' يوم</span></div>'+
+      '<div class="mi-row"><span class="mi-key">معدل التحديث المعلن من المصدر</span><span>'+(info.updateFreqHours ? ('كل '+info.updateFreqHours+' ساعة تقريبًا') : 'يعتمد على أفضل نموذج متاح، بدون جدول ثابت')+'</span></div>'+
+      runRows+
+      '<div class="mi-row"><span class="mi-key">حالة البيانات</span><span><span class="status-dot '+statusClass+'"></span>'+statusText+'</span></div>'+
+      '<div class="mi-note">أوقات "التشغيل" هنا تقدير مبني على جدول التحديث الرسمي المعلن من Open-Meteo ووقت جهازك الحالي (UTC) — وليست قيمة Run مؤكدة، لأن استجابة الـ API لا تتضمن وقت تشغيل النموذج فعليًا.</div>';
+  }
+
+  mapInfoBtn.addEventListener('click', ()=>{
+    modelInfoPanel.classList.toggle('hidden');
+    if (!modelInfoPanel.classList.contains('hidden')) renderModelInfoPanel();
+  });
+
+  function requestLocation(fromButton){
+    if (!navigator.geolocation){
+      if (fromButton) searchHint.textContent = 'المتصفح لا يدعم تحديد الموقع.';
+      return;
+    }
+    if (fromButton){ searchHint.textContent = 'جارٍ تحديد موقعك...'; }
+    navigator.geolocation.getCurrentPosition(async (pos)=>{
+      const {latitude, longitude} = pos.coords;
+      const name = await reverseGeocode(latitude, longitude);
+      addAndSelectCity(name, latitude, longitude);
+      if (fromButton) searchHint.textContent = 'اكتب اسم أي مدينة وأضفها لقائمتك، أو';
+    }, (err)=>{
+      if (fromButton) searchHint.textContent = 'تعذّر تحديد موقعك. اكتب اسم مدينتك يدويًا.';
+    }, { timeout: 10000 });
+  }
+
+  // ---------- الوحدة ----------
+  unitToggle.addEventListener('click', (e)=>{
+    const btn = e.target.closest('button[data-unit]');
+    if (!btn) return;
+    const nu = btn.getAttribute('data-unit');
+    if (nu===unit) return;
+    unit = nu;
+    storageSet(LS_UNIT, unit);
+    [...unitToggle.querySelectorAll('button')].forEach(b=>b.classList.toggle('active', b.getAttribute('data-unit')===unit));
+    loadWeather();
+  });
+
+  refreshTop.addEventListener('click', ()=> loadWeather({silent:true}));
+
+  // ---------- عرض الطقس ----------
+  function fmtUpdated(){ return 'آخر تحديث: '+new Date().toLocaleTimeString('ar-SA',{hour:'2-digit',minute:'2-digit'}); }
+  function unitSuffix(){ return unit==='fahrenheit' ? '°ف' : '°م'; }
+
+  // يحدد هل الوقت المحدد (نصًا بتوقيت الموقع المحلي، مثل "2026-09-19T14:00") نهار أم ليل،
+  // بالاعتماد على شروق/غروب ذلك اليوم بالذات في daily.sunrise/sunset (بيانات حقيقية من Open-Meteo لنفس الموقع).
+  // كل الحقول الزمنية هنا (hourly.time و daily.time و sunrise/sunset) بنفس الصيغة النصية وبتوقيت الموقع المحلي
+  // (timezone=auto)، فالمقارنة النصية المباشرة آمنة وتتجنب أي التباس بتحويلات UTC/الجهاز.
+  // يُرجع true/false، أو null إذا تعذّر إيجاد شروق/غروب ذلك اليوم (عندها يُستخدم احتياطي بسيط عند الاستدعاء فقط).
+  function isDaytimeAtLocalTimeString(timeStr, dailyData){
+    if (!timeStr || !dailyData || !dailyData.time || !dailyData.sunrise || !dailyData.sunset) return null;
+    const dateStr = timeStr.slice(0,10);
+    const idx = dailyData.time.findIndex(t => t.slice(0,10) === dateStr);
+    if (idx === -1 || !dailyData.sunrise[idx] || !dailyData.sunset[idx]) return null;
+    return timeStr >= dailyData.sunrise[idx] && timeStr < dailyData.sunset[idx];
+  }
+
+  function renderWeather(data, cityLabel){
+    const cur = data.current || {};
+    const daily = data.daily || {};
+    const hourly = data.hourly || {};
+    const isDay = !!cur.is_day;
+    const icon = wmoIcon(cur.weather_code, isDay);
+    titleIcon.textContent = icon;
+
+    // gradientForWeather يقارن دائمًا بدرجة مئوية — نحوّل من فهرنهايت هنا صراحة بدل تمرير القيمة الخام كما هي
+    const tempCForBg = (unit === 'fahrenheit' && typeof cur.temperature_2m === 'number')
+      ? (cur.temperature_2m - 32) * 5/9
+      : cur.temperature_2m;
+    document.body.style.setProperty('--weatherTint', gradientForWeather(cur.weather_code, isDay, tempCForBg));
+    document.body.style.backgroundImage = 'linear-gradient('+gradientForWeather(cur.weather_code,isDay,tempCForBg)+','+gradientForWeather(cur.weather_code,isDay,tempCForBg)+'), linear-gradient(180deg,var(--sky-1),var(--sky-2) 55%,var(--sky-3))';
+    // is_day هنا محسوب من Open-Meteo لموقع المدينة نفسها فعليًا (شروق/غروب ذلك الموقع)، وليس ساعة الجهاز
+    updateLightningForWeather(cur.weather_code, isDay);
+    updateCloudsForCategory(getWeatherCategory(cur.weather_code, isDay));
+
+    const hiToday = daily.temperature_2m_max ? Math.round(daily.temperature_2m_max[0]) : '--';
+    const loToday = daily.temperature_2m_min ? Math.round(daily.temperature_2m_min[0]) : '--';
+
+    let aqiHtml = '';
+
+    const alerts = [];
+    if (isHazardCode(cur.weather_code)){
+      alerts.push('حالة جوية شديدة الآن: '+wmoText(cur.weather_code)+' — يُنصح بالحذر.');
+    }
+    alertsBox.innerHTML = alerts.length ? alerts.map(a=>'<div class="alert-card"><div class="a-title">⚠️ '+a+'</div></div>').join('') : '';
+
+    const now = new Date();
+    let hourlyHtml = '';
+    if (hourly.time){
+      const startIdx = hourly.time.findIndex(t => new Date(t) >= now);
+      const from = startIdx>=0?startIdx:0;
+      hourlyHtml = hourly.time.slice(from, from+24).map((t,idx)=>{
+        const realIdx = from+idx;
+        const d = new Date(t);
+        const label = idx===0 ? 'الآن' : d.toLocaleTimeString('ar-SA',{hour:'numeric'});
+        const temp = Math.round(hourly.temperature_2m[realIdx]);
+        const rp = hourly.precipitation_probability ? hourly.precipitation_probability[realIdx] : 0;
+        const realDayCheck = isDaytimeAtLocalTimeString(t, daily);
+        const hIsDay = realDayCheck !== null ? realDayCheck : (d.getHours()>=6 && d.getHours()<18); // احتياطي فقط إذا تعذّر إيجاد شروق/غروب ذلك اليوم
+        return '<div class="hitem"><div class="t">'+label+'</div><div class="ic">'+wmoIcon(hourly.weather_code[realIdx], hIsDay)+'</div><div class="v">'+temp+'°</div>'+(rp>10?'<div class="p">💧'+rp+'%</div>':'')+'</div>';
+      }).join('');
+    }
+
+    let dailyHtml = '';
+    if (daily.time){
+      // نستبعد أي يوم قيمته الأساسية (حرارة عليا/دنيا) غير موجودة فعليًا (null) — يحدث أحيانًا في آخر يوم
+      // بحافة نطاق النموذج المطلوب. عرض هذا كصفر°/رمز غير معروف كان يوهم بأنها بيانات حقيقية.
+      const validIdx = daily.time.map((_, i) => i).filter(i =>
+        typeof daily.temperature_2m_max[i] === 'number' && typeof daily.temperature_2m_min[i] === 'number'
+      );
+      if (validIdx.length){
+        const maxTemp = Math.max(...validIdx.map(i => daily.temperature_2m_max[i]));
+        const minTemp = Math.min(...validIdx.map(i => daily.temperature_2m_min[i]));
+        const span = Math.max(1, maxTemp-minTemp);
+        dailyHtml = validIdx.map((idx, pos)=>{
+          const t = daily.time[idx];
+          const d = new Date(t);
+          const label = idx===0 ? 'اليوم' : d.toLocaleDateString('ar-SA',{weekday:'short'});
+          const hi = Math.round(daily.temperature_2m_max[idx]);
+          const lo = Math.round(daily.temperature_2m_min[idx]);
+          const leftPct = ((lo-minTemp)/span)*100;
+          const widthPct = ((hi-lo)/span)*100;
+          const rp = daily.precipitation_probability_max ? daily.precipitation_probability_max[idx] : 0;
+          return '<div class="drow">'+
+            '<div class="dname">'+label+'</div>'+
+            '<div class="dicon">'+wmoIcon(daily.weather_code[idx], true)+'</div>'+
+            '<div class="dprecip">'+(rp>10?'💧'+rp+'%':'')+'</div>'+
+            '<div class="drange"><span class="dlo">'+lo+'°</span>'+
+            '<div class="bar-track"><div class="bar-fill" style="right:'+leftPct+'%; width:'+widthPct+'%;"></div></div>'+
+            '<span class="dhi">'+hi+'°</span></div>'+
+          '</div>';
+        }).join('');
+      }
+    }
+
+    app.innerHTML =
+      '<div class="card">'+
+        '<div class="current-loc">📍 '+cityLabel+'</div>'+
+        '<div class="current-date">'+now.toLocaleDateString('ar-SA',{weekday:'long', day:'numeric', month:'long'})+' · '+now.toLocaleTimeString('ar-SA',{hour:'2-digit',minute:'2-digit'})+'</div>'+
+        '<div class="current-main"><div>'+
+          '<div class="current-temp">'+Math.round(cur.temperature_2m)+unitSuffix()+'</div>'+
+          '<div class="current-phrase">'+wmoText(cur.weather_code)+'</div>'+
+          '<div class="current-feel">الإحساس الحراري '+(typeof cur.apparent_temperature === 'number' ? (Math.round(cur.apparent_temperature)+unitSuffix()) : 'غير متاح لهذا النموذج')+'</div>'+
+          '<div class="current-hilo">'+hiToday+unitSuffix()+' / '+loToday+unitSuffix()+'</div>'+
+        '</div><div class="current-icon">'+icon+'</div></div>'+
+        aqiHtml+
+        '<div class="detail-grid">'+
+          '<div class="detail-item"><span class="icon">💧</span><div class="label">الرطوبة</div><div class="value">'+(cur.relative_humidity_2m ?? '--')+'%</div></div>'+
+          '<div class="detail-item"><span class="icon">💨</span><div class="label">الرياح</div><div class="value">'+Math.round(cur.wind_speed_10m||0)+' كم/س</div></div>'+
+          '<div class="detail-item"><span class="icon">🧭</span><div class="label">الضغط</div><div class="value">'+Math.round(cur.surface_pressure||0)+' hPa</div></div>'+
+          '<div class="detail-item"><span class="icon">☀️</span><div class="label">UV</div><div class="value">'+(daily.uv_index_max?Math.round(daily.uv_index_max[0]):'--')+'</div></div>'+
+          '<div class="detail-item"><span class="icon">🌅</span><div class="label">الشروق</div><div class="value">'+(daily.sunrise?new Date(daily.sunrise[0]).toLocaleTimeString('ar-SA',{hour:'2-digit',minute:'2-digit'}):'--')+'</div></div>'+
+          '<div class="detail-item"><span class="icon">🌇</span><div class="label">الغروب</div><div class="value">'+(daily.sunset?new Date(daily.sunset[0]).toLocaleTimeString('ar-SA',{hour:'2-digit',minute:'2-digit'}):'--')+'</div></div>'+
+        '</div>'+
+        '<div class="updated-row"><span class="updated">'+fmtUpdated()+'</span><button class="refresh-btn" id="refreshInline">🔄</button></div>'+
+      '</div>'+
+      (hourlyHtml?'<div class="section-title">⏱️ خلال الساعات القادمة</div><div class="card tight"><div class="hourly-row">'+hourlyHtml+'</div></div>':'')+
+      (dailyHtml?'<div class="section-title">📅 توقعات 7 أيام</div><div class="card tight"><div class="daily-list">'+dailyHtml+'</div></div>':'');
+
+    const rInline = document.getElementById('refreshInline');
+    if (rInline) rInline.addEventListener('click', ()=> loadWeather({silent:true}));
+  }
+
+  // رقم تسلسل عام لطلبات الطقس الرئيسية: كل استدعاء لـ loadWeather يأخذ رقمًا جديدًا، وأي استجابة
+  // تصل بعد ما صار في طلب أحدث منها (لتغيير نموذج أو مدينة بسرعة) يتم تجاهلها تمامًا ولا تُعرض أبدًا.
+  let weatherRequestSeq = 0;
+
+  async function loadWeather(opts){
+    opts = opts||{};
+    if (!currentCity) return;
+    const myReqCity = currentCity;      // نلتقط هوية المدينة والنموذج المطلوبين وقت إطلاق هذا الطلب تحديدًا
+    const myReqModel = selectedModel;
+    const mySeq = ++weatherRequestSeq;
+    if (!opts.silent) renderLoading('يتم تحميل حالة الطقس في '+currentCity.name+'...');
+    else refreshTop.classList.add('spinning');
+    if (!navigator.onLine){
+      if (mySeq === weatherRequestSeq){
+        renderError('تحقق من اتصالك بالإنترنت.', ()=>loadWeather(opts));
+        refreshTop.classList.remove('spinning');
+      }
+      return;
+    }
+    try{
+      const data = await fetchWeather(myReqCity.lat, myReqCity.lon, unit, myReqModel);
+      // لو صار طلب أحدث (تغيير نموذج/مدينة) قبل ما يرجع هذا الطلب، نتجاهل النتيجة كاملة — بيانات قديمة فعلًا
+      if (mySeq !== weatherRequestSeq) return;
+      renderWeather(data, myReqCity.name);
+      lastModelFetchOk = true;
+      if (!modelInfoPanel.classList.contains('hidden')) renderModelInfoPanel();
+    }catch(err){
+      if (mySeq !== weatherRequestSeq) return; // نفس الحماية على مسار الخطأ
+      lastModelFetchOk = false;
+      if (!modelInfoPanel.classList.contains('hidden')) renderModelInfoPanel();
+      if (err && err.isModelError){
+        renderError('تعذّر جلب بيانات نموذج "'+(WEATHER_MODELS[myReqModel]||{}).label+'" لهذا الموقع (قد لا يكون هذا النموذج يغطي هذه المنطقة). جرّب نموذجًا آخر أو "أفضل مزيج".', ()=>loadWeather(opts));
+      } else {
+        renderError('تعذّر جلب بيانات الطقس. تحقق من اتصالك بالإنترنت وحاول مرة أخرى.', ()=>loadWeather(opts));
+      }
+    }
+    if (mySeq === weatherRequestSeq) refreshTop.classList.remove('spinning');
+  }
+
+  // ---------- الخريطة ----------
+  let leafletMap = null, mapMarker = null;
+  let lastMapPoint = null;      // {lat, lng} آخر نقطة ضُغطت
+  let lastMapData = null;       // الاستجابة الكاملة المُجلَبة مرة واحدة لآخر نقطة — يُعاد استخدامها بالكامل بدل أي طلب إضافي
+  let lastMapHourly = null;     // مرجع مختصر لـ lastMapData.hourly (لتسهيل القراءة فقط)
+  let timelineIndex = 0;
+  let timelinePlaying = false, timelineTimer = null;
+
+  // الخريطة الأساسية: OpenFreeMap Dark، بدون API key.
+  // احتياطي ثانٍ: OpenFreeMap Liberty.
+  // احتياطي طوارئ أخير فقط: OpenStreetMap raster، حتى لا تبقى الخريطة سوداء إذا تعذر OpenFreeMap.
+  const MAP_STYLE_PRIMARY = 'https://tiles.openfreemap.org/styles/dark';
+  const MAP_STYLE_FALLBACK = 'https://tiles.openfreemap.org/styles/liberty';
+  const MAP_STYLE_EMERGENCY = {
+    version: 8,
+    sources: {
+      emergencyOSM: {
+        type: 'raster',
+        tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+        tileSize: 256,
+        scheme: 'xyz',
+        attribution: '© OpenStreetMap contributors',
+        maxzoom: 19
+      }
+    },
+    layers: [{
+      id: 'emergency-osm',
+      type: 'raster',
+      source: 'emergencyOSM',
+      minzoom: 0,
+      maxzoom: 19,
+      paint: { 'raster-opacity': 1, 'raster-fade-duration': 0 }
+    }]
+  };
+  let mapUsingFallbackStyle = false;
+  let mapUsingEmergencyStyle = false;
+  let mapStyleWatchdog = null;
+
+  function showMapStyleNotice(text){
+    const el = document.getElementById('mapStyleNotice');
+    if (!el) return;
+    el.textContent = text;
+    el.classList.remove('hidden');
+  }
+
+  // فحص تشخيصي: هل ملف maplibre-gl.css فعليًا محمّل بالصفحة؟ (متطلب رقم 7) — بدونه تظهر الخريطة بلا تحكم/سيطرة بصرية سليمة
+  function checkMapLibreCssLoaded(){
+    try{
+      const loaded = !!document.querySelector('link[href*="maplibre-gl.css"]');
+      if (!loaded) console.error('[Map] تشخيص: لم يتم العثور على رابط maplibre-gl.css في الصفحة.');
+      else console.log('[Map] تشخيص: رابط maplibre-gl.css موجود.');
+      return loaded;
+    }catch(e){ return false; }
+  }
+
+  // فحص تشخيصي: هل WebGL مدعوم فعليًا بهذا المتصفح/الجهاز؟ (متطلب رقم 8) — بدونه MapLibre لا يمكنه الرسم إطلاقًا
+  function checkWebglSupport(){
+    try{
+      const c = document.createElement('canvas');
+      const gl = c.getContext('webgl2') || c.getContext('webgl') || c.getContext('experimental-webgl');
+      if (!gl){ console.error('[Map] تشخيص: WebGL غير مدعوم على هذا المتصفح/الجهاز — MapLibre لا يمكنه الرسم بدونه.'); return false; }
+      console.log('[Map] تشخيص: WebGL مدعوم.');
+      return true;
+    }catch(e){
+      console.error('[Map] تشخيص: خطأ أثناء فحص دعم WebGL:', e);
+      return false;
+    }
+  }
+
+  // سلسلة الاحتياطي: Dark -> Liberty -> OSM emergency.
+  function switchToFallbackMapStyle(reason){
+    if (!leafletMap || mapUsingEmergencyStyle) return;
+
+    if (!mapUsingFallbackStyle){
+      mapUsingFallbackStyle = true;
+      console.error('[Map] فشل OpenFreeMap Dark، التبديل إلى OpenFreeMap Liberty. السبب:', reason);
+      showMapStyleNotice('جاري تشغيل نمط خريطة احتياطي…');
+      try{
+        leafletMap.setStyle(MAP_STYLE_FALLBACK);
+        const attrEl = document.getElementById('mapAttrText');
+        if (attrEl) attrEl.textContent = 'الخريطة الاحتياطية: OpenFreeMap Liberty · بيانات الخريطة من OpenStreetMap';
+        setTimeout(()=>{ if (leafletMap) leafletMap.resize(); }, 150);
+      }catch(e){
+        console.error('[Map] فشل تبديل OpenFreeMap Liberty:', e);
+        switchToEmergencyMapStyle(e && e.message ? e.message : 'تعذر تشغيل النمط الاحتياطي.');
+      }
+      return;
+    }
+
+    switchToEmergencyMapStyle(reason);
+  }
+
+  function switchToEmergencyMapStyle(reason){
+    if (!leafletMap || mapUsingEmergencyStyle) return;
+    mapUsingEmergencyStyle = true;
+    console.error('[Map] فشل OpenFreeMap بالكامل، التبديل إلى مصدر OSM للطوارئ. السبب:', reason);
+    showMapStyleNotice('جاري تشغيل مصدر خريطة طوارئ…');
+    try{
+      leafletMap.setStyle(MAP_STYLE_EMERGENCY);
+      const attrEl = document.getElementById('mapAttrText');
+      if (attrEl) attrEl.textContent = 'وضع الطوارئ: OpenStreetMap';
+      setTimeout(()=>{ if (leafletMap) leafletMap.resize(); }, 150);
+    }catch(e){
+      console.error('[Map] فشل مصدر الطوارئ أيضًا:', e);
+      showMapStyleNotice('تعذّر تحميل الخريطة. تحقق من اتصال الإنترنت ثم أعد فتح التطبيق.');
+    }
+  }
+
+  function initMap(){
+    if (leafletMap) return;
+    const containerEl = document.getElementById('leafletMap');
+    const statusEl = document.getElementById('mapBootStatus');
+    const setStatus = (msg, show=true) => {
+      if (!statusEl) return;
+      statusEl.textContent = msg;
+      statusEl.style.display = show ? 'block' : 'none';
+    };
+    if (!containerEl || containerEl.clientHeight === 0 || containerEl.clientWidth === 0){
+      setStatus('جاري تجهيز مساحة الخريطة…');
+      requestAnimationFrame(()=>{ fitMapHeight(); initMap(); });
+      return;
+    }
+    checkMapLibreCssLoaded();
+    // حماية: لو فشل تحميل مكتبة MapLibre من CDN (لا اتصال إنترنت مثلاً)، نعرض رسالة واضحة بدل شاشة بيضاء
+    // ولا نكسر باقي التطبيق (قسم الطقس يبقى يعمل بشكل طبيعي تمامًا)
+    if (typeof maplibregl === 'undefined'){
+      document.getElementById('leafletMap').innerHTML =
+        '<div class="state-box"><span class="icon">⚠️</span><div class="msg">تعذّر تحميل مكوّن الخريطة (فشل تحميل مكتبة MapLibre من CDN). تحقق من اتصالك بالإنترنت ثم أعد فتح التطبيق.</div></div>';
+      console.error('[Map] maplibregl غير معرّف — فشل تحميل مكتبة MapLibre من مصادر CDN المتاحة.');
+      return;
+    }
+    if (!checkWebglSupport()){
+      document.getElementById('leafletMap').innerHTML =
+        '<div class="state-box"><span class="icon">⚠️</span><div class="msg">هذا الجهاز/المتصفح لا يدعم WebGL، وهو مطلوب لعرض الخريطة. جرّب متصفحًا آخر أو حدّث المتصفح الحالي.</div></div>';
+      return;
+    }
+    try{
+      leafletMap = new maplibregl.Map({
+        container: 'leafletMap',
+        style: MAP_STYLE_PRIMARY, // OpenFreeMap Dark — بدون API key
+        center: [38, 35], // [lng, lat] — مركّز على سوريا، مع بروز واضح للمنطقة العربية المحيطة
+        zoom: 5.3,
+        minZoom: 2,
+        maxBounds: [[-180,-85],[180,85]] // حدود عالمية فضفاضة فقط لمنع تكرار الخريطة، وليست تقييدًا جغرافيًا لسوريا
+      });
+    }catch(e){
+      console.error('[Map] MapLibre init failed (WebGL context creation أو خطأ إنشاء عام):', e);
+      document.getElementById('leafletMap').innerHTML =
+        '<div class="state-box"><span class="icon">⚠️</span><div class="msg">تعذّر تشغيل الخريطة. حاول إعادة تحميل الصفحة.</div></div>';
+      leafletMap = null;
+      return;
+    }
+
+    // Watchdog: إذا لم يكتمل تحميل النمط خلال 12 ثانية، نبدأ سلسلة الاحتياطي بدل ترك الخريطة فارغة.
+    mapStyleWatchdog = setTimeout(()=>{
+      if (leafletMap && !leafletMap.isStyleLoaded()){
+        switchToFallbackMapStyle('انتهت مهلة تحميل OpenFreeMap Dark (12 ثانية).');
+      }
+    }, 12000);
+
+    // تسجيل مفصّل لأي خطأ حقيقي (مصدر الخطأ، نص الرسالة، ورابط المورد إن توفّر) — بدل صمت كامل يترك الخريطة بلا تفسير
+    leafletMap.on('error', (e)=>{
+      const err = e && e.error;
+      setStatus('تعذّر تحميل مصدر الخريطة. يتم تجربة مصدر احتياطي…');
+      console.error('[Map] MapLibre error — source:', (e && e.sourceId) || e, '| message:', (err && err.message) || err, '| resource URL:', (err && err.url) || (e && e.url) || 'غير متاحة');
+      if (!mapUsingEmergencyStyle) switchToFallbackMapStyle(err && err.message ? err.message : 'حدث خطأ أثناء تحميل الخريطة.');
+    });
+
+    // style.load: يؤكد أن ملف style.json نفسه وصل واكتمل تفسيره (منفصل عن اكتمال تحميل البلاطات المرئية بحدث load)
+    leafletMap.on('style.load', ()=>{
+      console.log('[Map] تشخيص: style.load — تم تحميل وتفسير نمط الخريطة بنجاح.');
+    });
+
+    leafletMap.on('load', ()=>{
+      console.log('[Map] تشخيص: load — الخريطة والبلاطات المرئية الأولية جاهزة.');
+      setStatus('', false);
+      clearTimeout(mapStyleWatchdog);
+      const notice = document.getElementById('mapStyleNotice');
+      if (notice) notice.classList.add('hidden');
+      leafletMap.resize(); // شبكة أمان إضافية لضمان الأبعاد الصحيحة حتى لو كانت الحاوية غير مرئية لحظة الإنشاء
+    });
+    leafletMap.on('styledata', ()=>{
+      if (leafletMap && leafletMap.isStyleLoaded()) clearTimeout(mapStyleWatchdog);
+    });
+
+    leafletMap.on('click', (e)=> fetchPointWeatherForMap(e.lngLat.lat, e.lngLat.lng));
+
+    let moveEndDebounce = null;
+    leafletMap.on('moveend', ()=>{
+      if (!activeLayer) return;
+      clearTimeout(moveEndDebounce);
+      moveEndDebounce = setTimeout(refreshLayerGrid, 500);
+    });
+
+    // فتح الخريطة أول مرة على مدينة المستخدم الحالية تلقائيًا (لو محدّدة أصلًا بقسم الطقس)، بدل انتظار ضغطة يدوية —
+    // هذا لا يغيّر أي شيء بقسم الطقس نفسه، فقط يقرأ currentCity الموجودة أصلًا
+    if (currentCity && !lastMapPoint){
+      fetchPointWeatherForMap(currentCity.lat, currentCity.lon);
+    }
+  }
+
+  // ---------- أدوات الخريطة العائمة: تكبير/تصغير/موقعي ----------
+  mapZoomIn.addEventListener('click', ()=>{ if (leafletMap) leafletMap.zoomIn(); });
+  mapZoomOut.addEventListener('click', ()=>{ if (leafletMap) leafletMap.zoomOut(); });
+  mapLocateBtn.addEventListener('click', ()=>{
+    if (!leafletMap) return;
+    if (!navigator.geolocation){
+      showMapStyleNotice('المتصفح لا يدعم تحديد الموقع.');
+      setTimeout(()=> document.getElementById('mapStyleNotice').classList.add('hidden'), 3000);
+      return;
+    }
+    mapLocateBtn.textContent = '…';
+    navigator.geolocation.getCurrentPosition((pos)=>{
+      mapLocateBtn.textContent = '📍';
+      fetchPointWeatherForMap(pos.coords.latitude, pos.coords.longitude);
+    }, ()=>{
+      mapLocateBtn.textContent = '📍';
+      showMapStyleNotice('تعذّر تحديد موقعك الحالي. تحقق من إذن الموقع بالمتصفح.');
+      setTimeout(()=> document.getElementById('mapStyleNotice').classList.add('hidden'), 3000);
+    }, { timeout: 10000 });
+  });
+
+  // ---------- بحث الخريطة العائم: يعيد استخدام geocodeSearch الحقيقية الموجودة أصلًا (بدون نتائج وهمية) ----------
+  let mapSearchDebounce = null, mapSearchSeq = 0;
+  async function doMapSearch(){
+    const q = mapSearchInput.value.trim();
+    const mySeq = ++mapSearchSeq;
+    if (!q){ mapSearchResults.classList.add('hidden'); mapSearchResults.innerHTML=''; return; }
+    mapSearchResults.classList.remove('hidden');
+    mapSearchResults.innerHTML = '<div class="map-search-hint-row">جارٍ البحث...</div>';
+    try{
+      const results = await geocodeSearch(q);
+      if (mySeq !== mapSearchSeq) return;
+      if (!results.length){
+        mapSearchResults.innerHTML = '<div class="map-search-hint-row">لا توجد نتائج لـ "'+q+'"</div>';
+        return;
+      }
+      mapSearchResults.innerHTML = results.slice(0,6).map(r=>{
+        const label = r.name + (r.admin1 ? '، '+r.admin1 : '') + (r.country ? ' - '+r.country : '');
+        return '<div class="map-search-result-item" data-lat="'+r.latitude+'" data-lon="'+r.longitude+'">📍 '+label+'</div>';
+      }).join('');
+    }catch(err){
+      if (mySeq !== mapSearchSeq) return;
+      mapSearchResults.innerHTML = '<div class="map-search-hint-row">تعذّر البحث، تحقق من اتصالك بالإنترنت.</div>';
+    }
+  }
+  mapSearchInput.addEventListener('input', ()=>{
+    clearTimeout(mapSearchDebounce);
+    mapSearchDebounce = setTimeout(doMapSearch, 400);
+  });
+  mapSearchInput.addEventListener('keydown', (e)=>{ if (e.key==='Enter'){ clearTimeout(mapSearchDebounce); doMapSearch(); } });
+  mapSearchResults.addEventListener('click', (e)=>{
+    const item = e.target.closest('.map-search-result-item');
+    if (!item) return;
+    const lat = parseFloat(item.getAttribute('data-lat'));
+    const lon = parseFloat(item.getAttribute('data-lon'));
+    mapSearchResults.classList.add('hidden');
+    mapSearchInput.value = '';
+    fetchPointWeatherForMap(lat, lon);
+  });
+
+  async function fetchPointWeatherForMap(lat, lng){
+    stopTimelinePlay();
+    lastMapPoint = { lat, lng };
+    if (mapMarker) mapMarker.remove();
+    mapMarker = new maplibregl.Marker({ color: '#ffd166' }).setLngLat([lng, lat]).addTo(leafletMap);
+    leafletMap.flyTo({ center: [lng, lat], zoom: Math.max(leafletMap.getZoom(), 8), essential: true, speed: 0.9 });
+    mapWeatherResult.innerHTML = '<div class="card state-box"><div class="spinner"></div><div class="msg">يتم جلب طقس هذا الموقع...</div></div>';
+    mapTimeline.classList.add('hidden');
+    try{
+      const data = await fetchWeather(lat, lng, unit, selectedModel);
+      lastModelFetchOk = true;
+      if (!modelInfoPanel.classList.contains('hidden')) renderModelInfoPanel();
+      lastMapData = data;
+      lastMapHourly = (data.hourly && data.hourly.time) ? data.hourly : null;
+      timelineIndex = 0;
+      renderMapPointResult(data, lat, lng, 0);
+      if (lastMapHourly){
+        mapTimeline.classList.remove('hidden');
+        tlSlider.max = String(Math.max(0, lastMapHourly.time.length - 1));
+        tlSlider.value = '0';
+        updateTimelineLabel(0);
+      }
+    }catch(err){
+      lastModelFetchOk = false;
+      if (!modelInfoPanel.classList.contains('hidden')) renderModelInfoPanel();
+      if (err && err.isModelError){
+        mapWeatherResult.innerHTML = '<div class="card state-box"><span class="icon">⚠️</span><div class="msg">تعذّر جلب بيانات نموذج "'+(WEATHER_MODELS[selectedModel]||{}).label+'" لهذا الموقع. جرّب نموذجًا آخر.</div></div>';
+      } else {
+        mapWeatherResult.innerHTML = '<div class="card state-box"><span class="icon">⚠️</span><div class="msg">تعذّر جلب الطقس لهذا الموقع.</div></div>';
+      }
+    }
+  }
+
+  function renderMapPointResult(data, lat, lng, hourIdx){
+    const cur = data.current || {};
+    let temp = cur.temperature_2m, code = cur.weather_code, isDay = !!cur.is_day, timeLabel = 'الآن (لحظي)';
+    if (hourIdx > 0 && data.hourly && data.hourly.time && data.hourly.time[hourIdx] !== undefined){
+      temp = data.hourly.temperature_2m[hourIdx];
+      code = data.hourly.weather_code[hourIdx];
+      const hd = new Date(data.hourly.time[hourIdx]);
+      const realDayCheck = isDaytimeAtLocalTimeString(data.hourly.time[hourIdx], data.daily);
+      isDay = realDayCheck !== null ? realDayCheck : (hd.getHours()>=6 && hd.getHours()<18); // احتياطي فقط إذا تعذّر إيجاد شروق/غروب ذلك اليوم
+      timeLabel = hd.toLocaleTimeString('ar-SA',{hour:'2-digit', minute:'2-digit'}) + ' — ' + hd.toLocaleDateString('ar-SA',{weekday:'short', day:'2-digit', month:'2-digit'});
+    }
+    const icon = wmoIcon(code, isDay);
+    mapWeatherResult.innerHTML = '<div class="card">'+
+      '<div class="current-loc">📍 '+lat.toFixed(3)+', '+lng.toFixed(3)+'</div>'+
+      '<div class="current-date">'+timeLabel+'</div>'+
+      '<div class="current-main"><div>'+
+        '<div class="current-temp">'+Math.round(temp)+unitSuffix()+'</div>'+
+        '<div class="current-phrase">'+wmoText(code)+'</div>'+
+      '</div><div class="current-icon">'+icon+'</div></div>'+
+      '<button class="primary-btn" id="addFromMapBtn" style="margin-top:14px; width:100%;">+ أضف هذا الموقع لقائمتي</button>'+
+    '</div>';
+    const addBtn = document.getElementById('addFromMapBtn');
+    if (addBtn) addBtn.addEventListener('click', ()=>{
+      addAndSelectCity('نقطة ('+lat.toFixed(2)+', '+lng.toFixed(2)+')', lat, lng);
+      tabWeather.click();
+    });
+  }
+
+  // ---------- Timeline: يتصفح بيانات الساعات الحقيقية المُجلَبة فعلًا لآخر نقطة، بدون طلبات إضافية ----------
+  function stopTimelinePlay(){
+    timelinePlaying = false;
+    clearInterval(timelineTimer);
+    tlPlay.textContent = '▶ تشغيل';
+    tlPlay.classList.remove('active');
+  }
+
+  // يحدّث نص التسمية فقط (تاريخ/وقت) بدون إعادة رسم بطاقة الطقس — يُستخدم عند أول جلب لنقطة جديدة
+  function updateTimelineLabel(idx){
+    if (!lastMapHourly || !lastMapHourly.time[idx]) return;
+    const hd = new Date(lastMapHourly.time[idx]);
+    const dateLabel = hd.toLocaleDateString('ar-SA',{weekday:'short', day:'2-digit', month:'2-digit'});
+    const timeLabelStr = hd.toLocaleTimeString('ar-SA',{hour:'2-digit', minute:'2-digit'});
+    tlLabel.textContent = (idx === 0 ? 'الآن — ' : '') + dateLabel + ' ' + timeLabelStr;
+  }
+
+  function goToTimelineIndex(idx){
+    if (!lastMapPoint || !lastMapHourly || !lastMapData) return;
+    timelineIndex = Math.max(0, Math.min(lastMapHourly.time.length - 1, idx));
+    tlSlider.value = String(timelineIndex);
+    updateTimelineLabel(timelineIndex);
+    // لا يوجد أي طلب API هنا — إعادة عرض من البيانات المخزّنة مسبقًا في lastMapData فقط
+    renderMapPointResult(lastMapData, lastMapPoint.lat, lastMapPoint.lng, timelineIndex);
+  }
+
+  tlSlider.addEventListener('input', ()=> goToTimelineIndex(parseInt(tlSlider.value,10)));
+  tlPrev.addEventListener('click', ()=> goToTimelineIndex(timelineIndex - 1));
+  tlNext.addEventListener('click', ()=> goToTimelineIndex(timelineIndex + 1));
+  tlPrevDay.addEventListener('click', ()=> goToTimelineIndex(timelineIndex - 24)); // يعتمد على الفاصل الساعي الفعلي بالبيانات المخزّنة
+  tlNextDay.addEventListener('click', ()=> goToTimelineIndex(timelineIndex + 24));
+  tlNow.addEventListener('click', ()=>{ stopTimelinePlay(); goToTimelineIndex(0); });
+  tlPlay.addEventListener('click', ()=>{
+    if (timelinePlaying){ stopTimelinePlay(); return; }
+    if (!lastMapHourly) return;
+    timelinePlaying = true;
+    tlPlay.textContent = '⏸ إيقاف';
+    tlPlay.classList.add('active');
+    timelineTimer = setInterval(()=>{
+      const next = timelineIndex + 1;
+      if (next > (lastMapHourly.time.length - 1)){ stopTimelinePlay(); return; }
+      goToTimelineIndex(next);
+    }, 1200);
+  });
+
+  // ---------- طبقات الخريطة: عيّنة نقاط حقيقية (Point Grid) من Open-Meteo، وليست خريطة Raster كاملة ----------
+  const LAYER_DEFS = {
+    temperature: { title:'الحرارة (نقاط حقيقية)', field:'temperature_2m', unit:'°', colors:[[0,'#3b82f6'],[15,'#22c55e'],[28,'#f59e0b'],[40,'#ef4444']], note:'قيم فعلية من Open-Meteo عند كل نقطة على الشبكة، وليست صورة تدرّج كاملة الدقة.' },
+    wind:        { title:'سرعة الرياح (نقاط حقيقية)', field:'wind_speed_10m', unit:'كم/س', colors:[[0,'#a7f3d0'],[20,'#34d399'],[40,'#0ea5e9'],[70,'#6366f1']], note:'سرعة الرياح الفعلية عند 10 أمتار لكل نقطة.' },
+    precipitation:{ title:'الهطول الحالي (نقاط حقيقية)', field:'precipitation', unit:'مم', colors:[[0,'#334155'],[1,'#38bdf8'],[5,'#2563eb'],[15,'#7c3aed']], note:'كمية الهطول اللحظية الفعلية، وليست رادار أمطار.' },
+    clouds:      { title:'الغطاء السحابي (نقاط حقيقية)', field:'cloud_cover', unit:'%', colors:[[0,'#fde68a'],[30,'#d1d5db'],[60,'#9ca3af'],[100,'#4b5563']], note:'نسبة الغطاء السحابي الفعلية لكل نقطة.' },
+    pressure:    { title:'الضغط الجوي (نقاط حقيقية)', field:'surface_pressure', unit:'hPa', colors:[[980,'#6366f1'],[1000,'#22c55e'],[1015,'#f59e0b'],[1035,'#ef4444']], note:'الضغط السطحي الفعلي؛ ليس خريطة خطوط تساوي ضغط (Isobars) مرسومة.' },
+    snow:        { title:'الثلوج (نقاط حقيقية)', field:'snowfall', unit:'سم', colors:[[0,'#334155'],[0.5,'#93c5fd'],[2,'#e0f2fe'],[5,'#ffffff']], note:'كمية تساقط الثلج اللحظية الفعلية حيث تتوفر.' }
+  };
+  let activeLayer = null;
+  const GRID_SOURCE_ID = 'weatherGrid';
+
+  function colorForValue(value, colors){
+    if (value === null || value === undefined || isNaN(value)) return '#666';
+    for (let i=colors.length-1; i>=0; i--){
+      if (value >= colors[i][0]) return colors[i][1];
+    }
+    return colors[0][1];
+  }
+
+  function renderLegend(layerKey){
+    const def = LAYER_DEFS[layerKey];
+    const gradientCss = 'linear-gradient(90deg,' + def.colors.map(c=>c[1]).join(',') + ')';
+    layerLegend.innerHTML =
+      '<div class="lg-title">'+def.title+'</div>'+
+      '<div class="lg-bar" style="background:'+gradientCss+'"></div>'+
+      '<div class="lg-scale">'+def.colors.map(c=>'<span>'+c[0]+def.unit+'</span>').join('')+'</div>'+
+      '<div class="lg-note">'+def.note+'</div>';
+    layerLegend.classList.remove('hidden');
+  }
+
+  // ينشئ مصدر/طبقات الشبكة مرة واحدة فقط (لو النمط جاهزًا)، ثم كل تحديث لاحق هو setData على نفس المصدر —
+  // بدون إعادة إنشاء أي عنصر، تحقيقًا لمتطلب الأداء "استخدم source/layer updates".
+  function ensureGridLayer(cb){
+    if (!leafletMap) return;
+    if (leafletMap.getSource(GRID_SOURCE_ID)){ if (cb) cb(); return; }
+    if (!leafletMap.isStyleLoaded()){
+      leafletMap.once('load', ()=> ensureGridLayer(cb));
+      return;
+    }
+    leafletMap.addSource(GRID_SOURCE_ID, { type:'geojson', data:{ type:'FeatureCollection', features:[] } });
+    leafletMap.addLayer({ id:'weatherGridCircles', type:'circle', source:GRID_SOURCE_ID, paint:{
+      'circle-radius': 15, 'circle-color': ['get','color'], 'circle-opacity': 0.85,
+      'circle-stroke-width': 1.5, 'circle-stroke-color': '#ffffff'
+    }});
+    leafletMap.addLayer({ id:'weatherGridLabels', type:'symbol', source:GRID_SOURCE_ID, layout:{
+      'text-field': ['get','label'], 'text-size': 10.5, 'text-allow-overlap': true, 'text-ignore-placement': true
+    }, paint:{ 'text-color': '#ffffff', 'text-halo-color':'#000000', 'text-halo-width':1 }});
+    if (cb) cb();
+  }
+
+  function clearGridMarkers(){
+    const src = leafletMap && leafletMap.getSource(GRID_SOURCE_ID);
+    if (src) src.setData({ type:'FeatureCollection', features:[] });
+  }
+
+  async function refreshLayerGrid(){
+    if (!activeLayer || !leafletMap) return;
+    const def = LAYER_DEFS[activeLayer];
+    const bounds = leafletMap.getBounds(); // MapLibre LngLatBounds تدعم نفس أسماء الدوال (getNorth/getSouth/getEast/getWest)
+    const cols = 5, rows = 4;
+    const lats = [], lons = [];
+    for (let r=0; r<rows; r++){
+      for (let c=0; c<cols; c++){
+        const lat = bounds.getSouth() + (r+0.5)*(bounds.getNorth()-bounds.getSouth())/rows;
+        const lon = bounds.getWest() + (c+0.5)*(bounds.getEast()-bounds.getWest())/cols;
+        lats.push(lat.toFixed(3)); lons.push(lon.toFixed(3));
+      }
+    }
+    const modelInfo = WEATHER_MODELS[selectedModel] || WEATHER_MODELS.best_match;
+    const modelParam = modelInfo.param ? ('&models='+modelInfo.param) : '';
+    const url = 'https://api.open-meteo.com/v1/forecast?latitude='+lats.join(',')+'&longitude='+lons.join(',')+
+      '&current=temperature_2m,wind_speed_10m,precipitation,cloud_cover,surface_pressure,snowfall'+
+      '&timezone=auto'+modelParam;
+    layerLegend.querySelector('.lg-note') && (layerLegend.querySelector('.lg-note').textContent = def.note + ' — يتم التحديث...');
+    try{
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('grid_failed');
+      const dataArr = await res.json();
+      const list = Array.isArray(dataArr) ? dataArr : [dataArr];
+      const features = list.map(pt=>{
+        const cur = pt.current || {};
+        const val = cur[def.field];
+        const color = colorForValue(val, def.colors);
+        const valText = (val===undefined||val===null||isNaN(val)) ? '—' : (Math.round(val*10)/10)+def.unit;
+        return {
+          type:'Feature',
+          geometry:{ type:'Point', coordinates:[pt.longitude, pt.latitude] },
+          properties:{ color, label: valText }
+        };
+      });
+      ensureGridLayer(()=>{
+        const src = leafletMap.getSource(GRID_SOURCE_ID);
+        if (src) src.setData({ type:'FeatureCollection', features });
+      });
+      renderLegend(activeLayer);
+    }catch(err){
+      renderLegend(activeLayer);
+      const noteEl = layerLegend.querySelector('.lg-note');
+      if (noteEl) noteEl.textContent = 'تعذّر تحديث نقاط هذه الطبقة الآن. تحقق من اتصالك بالإنترنت.';
+    }
+  }
+
+  layerRow.addEventListener('click', (e)=>{
+    const chip = e.target.closest('.layer-chip');
+    if (!chip) return;
+    const key = chip.getAttribute('data-layer');
+    if (activeLayer === key){
+      activeLayer = null;
+      chip.classList.remove('active');
+      layerLegend.classList.add('hidden');
+      clearGridMarkers();
+      return;
+    }
+    [...layerRow.querySelectorAll('.layer-chip')].forEach(b=>b.classList.remove('active'));
+    chip.classList.add('active');
+    activeLayer = key;
+    renderLegend(key);
+    refreshLayerGrid();
+  });
+
+
+  function fitMapHeight(){
+    const wrapEl = document.getElementById('mapFsWrap');
+    if (!wrapEl || !mapView.classList.contains('active')) return;
+    const rect = wrapEl.getBoundingClientRect();
+    const available = window.innerHeight - rect.top - 8; // مساحة تنفّس بسيطة أسفل الخريطة
+    wrapEl.style.height = Math.max(360, Math.min(900, available)) + 'px';
+  }
+  window.addEventListener('resize', fitMapHeight);
+  window.addEventListener('orientationchange', ()=> setTimeout(fitMapHeight, 200));
+
+  tabWeather.addEventListener('click', ()=>{
+    tabWeather.classList.add('active'); tabMap.classList.remove('active');
+    weatherView.style.display='block'; mapView.classList.remove('active');
+  });
+  tabMap.addEventListener('click', ()=>{
+    tabMap.classList.add('active'); tabWeather.classList.remove('active');
+    weatherView.style.display='none'; mapView.classList.add('active');
+    // مهم: نضبط ارتفاع الحاوية الحقيقي قبل إنشاء الخريطة مباشرة، وليس بعدها —
+    // إنشاء MapLibre داخل حاوية ارتفاعها صفر (قبل أن يُطبَّق display:block/الارتفاع) يفسد قياس viewport الأولي
+    fitMapHeight();
+    initMap();
+    setTimeout(()=>{ fitMapHeight(); if(leafletMap) leafletMap.resize(); }, 100);
+    setTimeout(()=>{ if(leafletMap) leafletMap.resize(); }, 500);
+  });
+
+  // ---------- الإقلاع ----------
+  async function bootstrap(){
+    initSky();
+    unit = storageGet(LS_UNIT,'celsius');
+    [...unitToggle.querySelectorAll('button')].forEach(b=>b.classList.toggle('active', b.getAttribute('data-unit')===unit));
+
+    selectedModel = storageGet(LS_MODEL, 'best_match');
+    if (!WEATHER_MODELS[selectedModel]) selectedModel = 'best_match';
+    applyModelToUI();
+
+    cities = storageGet(LS_CITIES, []);
+    currentCity = storageGet(LS_CURRENT, null);
+
+    if (cities.length && currentCity && cities.find(c=>c.id===currentCity.id)){
+      renderChips();
+      loadWeather();
+    } else if (cities.length){
+      currentCity = cities[0];
+      storageSet(LS_CURRENT, currentCity);
+      renderChips();
+      loadWeather();
+    } else {
+      renderLoading('جارٍ تحديد موقعك...');
+      if (navigator.geolocation){
+        navigator.geolocation.getCurrentPosition(async (pos)=>{
+          const {latitude, longitude} = pos.coords;
+          const name = await reverseGeocode(latitude, longitude);
+          addAndSelectCity(name, latitude, longitude);
+        }, async ()=>{
+          // فشل تحديد الموقع: استخدم دمشق كافتراضي
+          try{
+            const res = await geocodeSearch('دمشق');
+            const r = res[0];
+            if (r) addAndSelectCity('دمشق', r.latitude, r.longitude);
+            else renderError('تعذّر تحديد موقعك وتحميل مدينة افتراضية.', bootstrap);
+          }catch(e){
+            renderError('تحقق من اتصالك بالإنترنت ثم أعد المحاولة.', bootstrap);
+          }
+        }, { timeout: 8000 });
+      } else {
+        try{
+          const res = await geocodeSearch('دمشق');
+          const r = res[0];
+          if (r) addAndSelectCity('دمشق', r.latitude, r.longitude);
+        }catch(e){
+          renderError('تحقق من اتصالك بالإنترنت ثم أعد المحاولة.', bootstrap);
+        }
+      }
+    }
+
+    if (refreshTimer) clearInterval(refreshTimer);
+    refreshTimer = setInterval(()=> loadWeather({silent:true}), 10*60*1000);
+  }
+
+  bootstrap();
+
+  if ('serviceWorker' in navigator){
+    window.addEventListener('load', async () => {
+      try {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        for (const reg of regs) await reg.unregister();
+        if (window.caches) {
+          const names = await caches.keys();
+          await Promise.all(names.map(n => caches.delete(n)));
+        }
+      } catch(e) { console.warn('[SW] cleanup skipped', e); }
+    });
+  }
+})();
+</script>
+</body>
+</html>
